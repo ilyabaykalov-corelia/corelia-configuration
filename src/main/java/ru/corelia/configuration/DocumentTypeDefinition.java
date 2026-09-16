@@ -10,7 +10,7 @@ public final class DocumentTypeDefinition {
     public DocumentTypeDefinition(JsonNode input, Set<String> operations) {
         if (input == null || !input.isObject()) throw new ConfigurationException("documentTypes entries must be objects");
         definition = input.deepCopy();
-        AttributeSchema.keywords(definition, Set.of("id", "title", "schemaVersion", "schema", "ui", "storage", "workflow", "attachments", "presentation", "normalization"), "documentType");
+        AttributeSchema.keywords(definition, Set.of("id", "title", "schemaVersion", "schema", "ui", "storage", "workflow", "attachments", "presentation", "normalization", "authorization"), "documentType");
         requiredText(definition, "id"); requiredText(definition, "title");
         if (!id().matches("[A-Za-z_][A-Za-z0-9_]*")) throw new ConfigurationException("Invalid document type identifier");
         if (!definition.path("schemaVersion").isIntegralNumber() || !definition.path("schemaVersion").canConvertToInt() || schemaVersion() < 1)
@@ -38,6 +38,16 @@ public final class DocumentTypeDefinition {
             if (!presentation.path("statuses").has(presentation.path("initialStatus").asString())) throw new ConfigurationException("Unknown initial status");
             for (JsonNode alias : presentation.path("aliases")) if (!presentation.path("statuses").has(alias.asString())) throw new ConfigurationException("Unknown status alias");
             for (var tone : presentation.path("tones").properties()) if (!presentation.path("statuses").has(tone.getKey()) || !Set.of("success", "warning", "error", "info").contains(tone.getValue().asString())) throw new ConfigurationException("Invalid status tone");
+        }
+        if (definition.has("authorization")) {
+            JsonNode authorization = definition.path("authorization");
+            if (!authorization.isObject()) throw new ConfigurationException("Invalid authorization");
+            AttributeSchema.keywords(authorization, Set.of("createPermission", "editPermission", "executorRole", "editableStatuses", "initialUploadStatuses"), "authorization");
+            for (String key : List.of("createPermission", "editPermission", "executorRole")) requiredText(authorization, key);
+            for (String key : List.of("editableStatuses", "initialUploadStatuses")) {
+                if (!authorization.path(key).isArray()) throw new ConfigurationException("Invalid authorization " + key);
+                for (JsonNode status : authorization.path(key)) if (!status.isTextual() || !definition.path("presentation").path("statuses").has(status.asString())) throw new ConfigurationException("Unknown authorization status");
+            }
         }
         JsonNode ui = definition.path("ui");
         if (!ui.isObject()) throw new ConfigurationException("Missing ui: " + id());
@@ -116,6 +126,7 @@ public final class DocumentTypeDefinition {
         }
         return schema.validate(normalized, partial);
     }
+    public JsonNode authorization() { return definition.path("authorization").deepCopy(); }
     public JsonNode presentation() { return definition.path("presentation").deepCopy(); }
     public JsonNode definition() { return definition.deepCopy(); }
     public JsonNode ui() { return definition.path("ui").deepCopy(); }
