@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ObjectNode;
+import java.io.InputStream;
 import java.nio.file.*;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -98,5 +99,19 @@ class ConfigurationLoaderTest {
             ((ObjectNode) config.path("operations").path("readDocument")).put("file", "link.graphql");
             assertThrows(ConfigurationException.class, () -> load(config));
         } finally { Files.deleteIfExists(outside); }
+    }
+    @Test void normalizesMigratedSberNpfV2ExactlyLikeV1() throws Exception {
+        Path v1 = root.resolve("v1");
+        Files.createDirectories(v1.resolve("graphql"));
+        try (InputStream input = getClass().getResourceAsStream("/configuration-v1-sber-npf.json")) {
+            assertNotNull(input);
+            Files.copy(input, v1.resolve("configuration.json"));
+        }
+        Path v2 = Path.of("../../sber-npf-corelia-config");
+        try (var resources = Files.list(v2.resolve("graphql"))) {
+            for (Path resource : resources.toList()) Files.copy(resource, v1.resolve("graphql").resolve(resource.getFileName()));
+        }
+        var loader = new ConfigurationLoader();
+        assertEquals(loader.load(v1, "0.1.0").normalizedConfiguration(), loader.load(v2, "0.1.0").normalizedConfiguration());
     }
 }
