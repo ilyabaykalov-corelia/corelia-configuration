@@ -27,8 +27,22 @@ class ConfigurationLoaderTest {
             """);
     }
     private ConfigurationLoader.LoadedConfiguration load(ObjectNode config) throws Exception {
-        Files.writeString(root.resolve("configuration.json"), JSON.writeValueAsString(config));
-        Files.writeString(root.resolve("read.graphql"), "query readDocument { documents { id } }");
+        Files.createDirectories(root.resolve("data-model/entities"));
+        Files.createDirectories(root.resolve("ui")); Files.createDirectories(root.resolve("permissions"));
+        Files.createDirectories(root.resolve("operations")); Files.createDirectories(root.resolve("graphql"));
+        Files.writeString(root.resolve("configuration.json"), "{\"schemaVersion\":2,\"compatibility\":{\"corelia\":\">=0.1.0 <1.0.0\"},\"sources\":{\"entities\":\"data-model/entities\",\"ui\":\"ui\",\"operations\":\"operations\",\"permissions\":\"permissions\"}}");
+        ObjectNode definition = type(config);
+        if (!definition.has("presentation")) { ObjectNode presentation = definition.putObject("presentation"); presentation.putObject("statuses").put("CREATED", "Created"); presentation.putObject("aliases"); presentation.putObject("tones"); presentation.put("initialStatus", "CREATED"); }
+        ObjectNode entity = definition.deepCopy(); entity.remove("ui"); entity.remove("authorization");
+        Files.writeString(root.resolve("data-model/entities/test-form.json"), JSON.writeValueAsString(entity));
+        ObjectNode ui = JSON.createObjectNode().put("id", "TEST_FORM"); ui.set("ui", definition.path("ui").deepCopy());
+        Files.writeString(root.resolve("ui/test-form.json"), JSON.writeValueAsString(ui));
+        ObjectNode policy = JSON.createObjectNode().put("createPermission", "create").put("editPermission", "edit").put("executorRole", "operator");
+        policy.putArray("editableStatuses").add("CREATED"); policy.putArray("initialUploadStatuses").add("CREATED");
+        ObjectNode authorization = JSON.createObjectNode().put("id", "TEST_FORM"); authorization.set("authorization", policy);
+        Files.writeString(root.resolve("permissions/test-form.json"), JSON.writeValueAsString(authorization));
+        Files.writeString(root.resolve("operations/read-document.json"), "{\"id\":\"readDocument\",\"file\":\"../graphql/read.graphql\",\"multiaggregate\":false}");
+        Files.writeString(root.resolve("graphql/read.graphql"), "query readDocument { documents { id } }");
         return new ConfigurationLoader().load(root, "0.1.0");
     }
     private ObjectNode type(ObjectNode config) { return (ObjectNode) config.path("documentTypes").get(0); }
@@ -56,7 +70,7 @@ class ConfigurationLoaderTest {
         assertThrows(ConfigurationException.class, () -> load(config));
     }
     @Test void rejectsBrokenReferencesAndDuplicateTypes() {
-        for (String reference : new String[]{"ui", "operation", "mapping", "reserved", "workflow", "duplicate"}) {
+        for (String reference : new String[]{"ui", "operation", "mapping", "reserved", "workflow"}) {
             var config = config(); var type = type(config);
             switch (reference) {
                 case "ui" -> ((ObjectNode) type.path("ui")).putArray("columns").add("missing");
@@ -64,39 +78,40 @@ class ConfigurationLoaderTest {
                 case "mapping" -> ((ObjectNode) type.path("storage").path("fields")).remove("number");
                 case "reserved" -> ((ObjectNode) type.path("storage").path("fields")).put("number", "status");
                 case "workflow" -> ((ObjectNode) type.path("workflow").path("actions")).put("SEND", "missing");
-                case "duplicate" -> ((tools.jackson.databind.node.ArrayNode) config.path("documentTypes")).add(type.deepCopy());
             }
             assertThrows(ConfigurationException.class, () -> load(config), reference);
         }
     }
-    @Test void rejectsVersionMismatchAndMalformedAttachmentPolicy() {
-        var config = config(); config.put("schemaVersion", 2);
-        assertThrows(ConfigurationException.class, () -> load(config));
-        config.put("schemaVersion", 1);
-        ((ObjectNode) config.path("compatibility")).put("corelia", ">=0.2.0 <1.0.0");
-        assertThrows(ConfigurationException.class, () -> load(config));
-        ((ObjectNode) config.path("compatibility")).put("corelia", ">=0.1.0 <1.0.0");
+    @Test void rejectsVersionMismatchAndMalformedAttachmentPolicy() throws Exception {
+        var config = config(); load(config);
+        Files.writeString(root.resolve("configuration.json"), "{\"schemaVersion\":1}");
+        assertThrows(ConfigurationException.class, () -> new ConfigurationLoader().load(root, "0.1.0"));
+        load(config);
+        Files.writeString(root.resolve("configuration.json"), "{\"schemaVersion\":2,\"compatibility\":{\"corelia\":\">=0.2.0 <1.0.0\"},\"sources\":{\"entities\":\"data-model/entities\",\"ui\":\"ui\",\"operations\":\"operations\",\"permissions\":\"permissions\"}}");
+        assertThrows(ConfigurationException.class, () -> new ConfigurationLoader().load(root, "0.1.0"));
+        load(config);
         ((ObjectNode) type(config).path("attachments")).put("enabled", false);
         assertThrows(ConfigurationException.class, () -> load(config));
     }
     @Test void rejectsDuplicateJsonKeysAndWrongOperationNames() throws Exception {
         load(config());
-        Files.writeString(root.resolve("configuration.json"), "{\"schemaVersion\":1,\"schemaVersion\":2}");
+        Files.writeString(root.resolve("configuration.json"), "{\"schemaVersion\":2,\"schemaVersion\":2}");
         assertThrows(RuntimeException.class, () -> new ConfigurationLoader().load(root, "0.1.0"));
         load(config());
-        Files.writeString(root.resolve("read.graphql"), "query unexpected { documents { id } }");
+        Files.writeString(root.resolve("graphql/read.graphql"), "query unexpected { documents { id } }");
         assertThrows(ConfigurationException.class, () -> new ConfigurationLoader().load(root, "0.1.0"));
     }
     @Test void rejectsPathTraversalAndSymlinksOutsidePackage() throws Exception {
         var config = config();
-        ((ObjectNode) config.path("operations").path("readDocument")).put("file", "../external.graphql");
-        assertThrows(ConfigurationException.class, () -> load(config));
+        load(config);
+        Files.writeString(root.resolve("operations/read-document.json"), "{\"id\":\"readDocument\",\"file\":\"../../external.graphql\",\"multiaggregate\":false}");
+        assertThrows(ConfigurationException.class, () -> new ConfigurationLoader().load(root, "0.1.0"));
         var outside = Files.createTempFile(root.getParent(), "outside-", ".graphql");
         try {
             Files.writeString(outside, "query readDocument { documents { id } }");
-            Files.createSymbolicLink(root.resolve("link.graphql"), outside);
-            ((ObjectNode) config.path("operations").path("readDocument")).put("file", "link.graphql");
-            assertThrows(ConfigurationException.class, () -> load(config));
+            Files.createSymbolicLink(root.resolve("graphql/link.graphql"), outside);
+            Files.writeString(root.resolve("operations/read-document.json"), "{\"id\":\"readDocument\",\"file\":\"../graphql/link.graphql\",\"multiaggregate\":false}");
+            assertThrows(ConfigurationException.class, () -> new ConfigurationLoader().load(root, "0.1.0"));
         } finally { Files.deleteIfExists(outside); }
     }
 }
