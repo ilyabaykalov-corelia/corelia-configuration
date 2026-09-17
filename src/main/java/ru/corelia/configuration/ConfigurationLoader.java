@@ -14,13 +14,10 @@ import java.util.regex.Pattern;
 public final class ConfigurationLoader {
     private static final JsonMapper JSON = JsonMapper.builder().enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build();
     private static final Pattern ID = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
-    public record LoadedConfiguration(DocumentTypeRegistry documentTypes, Map<String, Operation> operations,
-                                      JsonNode normalizedConfiguration) {
+    public record LoadedConfiguration(DocumentTypeRegistry documentTypes, Map<String, Operation> operations) {
         public LoadedConfiguration {
             operations = Collections.unmodifiableMap(new LinkedHashMap<>(operations));
-            normalizedConfiguration = normalizedConfiguration.deepCopy();
         }
-        @Override public JsonNode normalizedConfiguration() { return normalizedConfiguration.deepCopy(); }
     }
     public record Operation(String text, boolean multiaggregate) {}
 
@@ -31,26 +28,11 @@ public final class ConfigurationLoader {
             if (manifest == null || !manifest.isObject()) throw new ConfigurationException("Configuration must be an object");
             if (!manifest.path("schemaVersion").isIntegralNumber() || !manifest.path("schemaVersion").canConvertToInt())
                 throw new ConfigurationException("Unsupported configuration schemaVersion");
-            return switch (manifest.path("schemaVersion").asInt()) {
-                case 1 -> readV1(root, manifest, productVersion);
-                case 2 -> readV2(root, manifest, productVersion);
-                default -> throw new ConfigurationException("Unsupported configuration schemaVersion");
-            };
+            if (manifest.path("schemaVersion").asInt() != 2) throw new ConfigurationException("Unsupported configuration schemaVersion");
+            return readV2(root, manifest, productVersion);
         } catch (IOException e) {
             throw new ConfigurationException("Cannot read configuration package: " + directory, e);
         }
-    }
-
-    private LoadedConfiguration readV1(Path root, JsonNode config, String productVersion) throws IOException {
-        AttributeSchema.keywords(config, Set.of("schemaVersion", "compatibility", "operations", "documentTypes"), "configuration");
-        validateCompatibility(config, productVersion);
-        var operations = readV1Operations(root, config.path("operations"));
-        if (!config.path("documentTypes").isArray()) throw new ConfigurationException("documentTypes must be an array");
-        var definitions = new ArrayList<DocumentTypeDefinition>();
-        for (JsonNode definition : config.path("documentTypes")) definitions.add(new DocumentTypeDefinition(definition, operations.keySet()));
-        definitions.sort(Comparator.comparing(DocumentTypeDefinition::id));
-        var registry = new DocumentTypeRegistry(definitions);
-        return new LoadedConfiguration(registry, operations, normalized(config, operations, registry));
     }
 
     private LoadedConfiguration readV2(Path root, JsonNode manifest, String productVersion) throws IOException {
@@ -81,14 +63,7 @@ public final class ConfigurationLoader {
         if (!permissions.isEmpty()) throw new ConfigurationException(permissions.values().iterator().next().display() + ": Unknown entity '" + permissions.keySet().iterator().next() + "'");
         definitions.sort(Comparator.comparing(DocumentTypeDefinition::id));
         var registry = new DocumentTypeRegistry(definitions);
-        return new LoadedConfiguration(registry, operations, normalized(manifest, operations, registry));
-    }
-
-    private Map<String, Operation> readV1Operations(Path root, JsonNode source) throws IOException {
-        if (!source.isObject()) throw new ConfigurationException("operations must be an object");
-        var operations = new LinkedHashMap<String, Operation>();
-        for (var entry : source.properties()) operations.put(entry.getKey(), operation(root, root, entry.getKey(), entry.getValue(), "operations." + entry.getKey()));
-        return ordered(operations);
+        return new LoadedConfiguration(registry, operations);
     }
 
     private Map<String, Operation> readV2Operations(Path root, List<Path> files) throws IOException {
@@ -140,16 +115,6 @@ public final class ConfigurationLoader {
         if (!ID.matcher(id).matches()) throw new ConfigurationException(display + ": Invalid " + type + " identifier: " + id);
         String expected = id.replaceAll("([a-z0-9])([A-Z])", "$1-$2").replace('_', '-').toLowerCase(Locale.ROOT) + ".json";
         if (!expected.equals(file.getFileName().toString())) throw new ConfigurationException(display + ": Expected file name '" + expected + "' for " + type + " '" + id + "'");
-    }
-
-    private ObjectNode normalized(JsonNode manifest, Map<String, Operation> operations, DocumentTypeRegistry registry) {
-        ObjectNode result = JSON.createObjectNode(); result.put("schemaVersion", 1);
-        result.set("compatibility", manifest.path("compatibility").deepCopy());
-        ObjectNode opNode = result.putObject("operations");
-        for (var entry : operations.entrySet()) opNode.putObject(entry.getKey()).put("file", "graphql/" + entry.getKey() + ".graphql").put("multiaggregate", entry.getValue().multiaggregate());
-        var types = result.putArray("documentTypes");
-        for (DocumentTypeDefinition definition : registry.all()) types.add(definition.definition());
-        return result;
     }
 
     private static Map<String, Operation> ordered(Map<String, Operation> operations) {
