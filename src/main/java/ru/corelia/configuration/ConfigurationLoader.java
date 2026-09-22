@@ -14,13 +14,12 @@ import java.util.regex.Pattern;
 public final class ConfigurationLoader {
     private static final JsonMapper JSON = JsonMapper.builder().enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build();
     private static final Pattern ID = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
-    public record LoadedConfiguration(DocumentTypeRegistry documentTypes, Map<String, JsonNode> providerBindings, Map<String, Operation> operations) {
+    public record LoadedConfiguration(DocumentTypeRegistry documentTypes, Map<String, JsonNode> providerBindings, Path packageRoot) {
         public LoadedConfiguration {
             providerBindings = Collections.unmodifiableMap(new LinkedHashMap<>(providerBindings));
-            operations = Collections.unmodifiableMap(new LinkedHashMap<>(operations));
+            packageRoot = packageRoot.toAbsolutePath().normalize();
         }
     }
-    public record Operation(String text, boolean multiaggregate) {}
 
     public LoadedConfiguration load(Path directory, String productVersion) {
         try {
@@ -46,7 +45,6 @@ public final class ConfigurationLoader {
         for (String type : List.of("entities", "ui", "operations", "permissions"))
             roots.put(type, sourceDirectory(root, DocumentTypeDefinition.requiredText(sources, type), type));
 
-        var operations = readV2Operations(root, scan(roots.get("operations"), "operations"));
         var entities = fragmentsById(root, scan(roots.get("entities"), "entities"), "entity", Set.of("id", "title", "schemaVersion", "schema", "storage", "workflow", "attachments", "presentation", "normalization"));
         var ui = fragmentsById(root, scan(roots.get("ui"), "ui"), "ui", Set.of("id", "ui"));
         var permissions = fragmentsById(root, scan(roots.get("permissions"), "permissions"), "permissions", Set.of("id", "authorization"));
@@ -74,37 +72,7 @@ public final class ConfigurationLoader {
         if (!permissions.isEmpty()) throw new ConfigurationException(permissions.values().iterator().next().display() + ": Unknown entity '" + permissions.keySet().iterator().next() + "'");
         definitions.sort(Comparator.comparing(DocumentTypeDefinition::id));
         var registry = new DocumentTypeRegistry(definitions);
-        return new LoadedConfiguration(registry, bindings, operations);
-    }
-
-    private Map<String, Operation> readV2Operations(Path root, List<Path> files) throws IOException {
-        var result = new LinkedHashMap<String, Operation>();
-        var origins = new LinkedHashMap<String, String>();
-        for (Path file : files) {
-            String display = display(root, file); JsonNode node = read(file, display);
-            if (!node.isObject()) throw new ConfigurationException(display + ": Operation must be an object");
-            AttributeSchema.keywords(node, Set.of("id", "file", "multiaggregate"), display);
-            String id = DocumentTypeDefinition.requiredText(node, "id");
-            validateIdAndName(id, file, "operation", display);
-            if (origins.putIfAbsent(id, display) != null) throw new ConfigurationException("Duplicate operation '" + id + "'\nDefined in:\n  " + origins.get(id) + "\n  " + display);
-            result.put(id, operation(root, file.getParent(), id, node, display));
-        }
-        if (result.isEmpty()) throw new ConfigurationException("operations must not be empty");
-        return ordered(result);
-    }
-
-    private Operation operation(Path root, Path base, String id, JsonNode op, String display) throws IOException {
-        if (!ID.matcher(id).matches() || !op.isObject()) throw new ConfigurationException(display + ": Invalid operation '" + id + "'");
-        AttributeSchema.keywords(op, Set.of("id", "file", "multiaggregate"), display);
-        if (!op.path("multiaggregate").isBoolean()) throw new ConfigurationException(display + ": Missing multiaggregate flag: " + id);
-        String relative = DocumentTypeDefinition.requiredText(op, "file");
-        Path graphql = base.resolve(relative).normalize();
-        if (!graphql.startsWith(root) || !Files.isRegularFile(graphql) || !graphql.toRealPath().startsWith(root))
-            throw new ConfigurationException(display + ": GraphQL resource does not exist: " + relative);
-        String text = Files.readString(graphql).trim();
-        var name = Pattern.compile("^(?:query|mutation)\\s+([A-Za-z_][A-Za-z0-9_]*)(?=[\\s({])").matcher(text);
-        if (!name.find() || !id.equals(name.group(1))) throw new ConfigurationException(display + ": Operation name mismatch: " + id);
-        return new Operation(text, op.path("multiaggregate").asBoolean());
+        return new LoadedConfiguration(registry, bindings, root);
     }
 
     private Map<String, Fragment> fragmentsById(Path root, List<Path> files, String label, Set<String> keys) throws IOException {
@@ -128,11 +96,6 @@ public final class ConfigurationLoader {
         if (!expected.equals(file.getFileName().toString())) throw new ConfigurationException(display + ": Expected file name '" + expected + "' for " + type + " '" + id + "'");
     }
 
-    private static Map<String, Operation> ordered(Map<String, Operation> operations) {
-        var result = new LinkedHashMap<String, Operation>();
-        new TreeMap<>(operations).forEach(result::put);
-        return result;
-    }
 
     private void validateCompatibility(JsonNode config, String productVersion) {
         JsonNode compatibility = config.path("compatibility");

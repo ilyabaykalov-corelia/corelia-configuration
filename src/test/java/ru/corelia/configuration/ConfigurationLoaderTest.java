@@ -69,15 +69,12 @@ class ConfigurationLoaderTest {
         ((ObjectNode) type(config).path("schema")).put("oneOf", "unsupported");
         assertThrows(ConfigurationException.class, () -> load(config));
     }
-    @Test void rejectsBrokenReferencesAndDuplicateTypes() {
-        for (String reference : new String[]{"ui", "operation", "mapping", "reserved", "workflow"}) {
+    @Test void rejectsBrokenCoreliaReferences() {
+        for (String reference : new String[]{"ui"}) {
             var config = config(); var type = type(config);
             switch (reference) {
                 case "ui" -> ((ObjectNode) type.path("ui")).putArray("columns").add("missing");
-                case "operation" -> ((ObjectNode) type.path("storage").path("operations")).put("get", "missing");
-                case "mapping" -> ((ObjectNode) type.path("storage").path("fields")).remove("number");
-                case "reserved" -> ((ObjectNode) type.path("storage").path("fields")).put("number", "status");
-                case "workflow" -> ((ObjectNode) type.path("workflow").path("actions")).put("SEND", "missing");
+                default -> throw new IllegalStateException(reference);
             }
             assertThrows(ConfigurationException.class, () -> load(config), reference);
         }
@@ -93,25 +90,15 @@ class ConfigurationLoaderTest {
         ((ObjectNode) type(config).path("attachments")).put("enabled", false);
         assertThrows(ConfigurationException.class, () -> load(config));
     }
-    @Test void rejectsDuplicateJsonKeysAndWrongOperationNames() throws Exception {
+    @Test void rejectsDuplicateJsonKeys() throws Exception {
         load(config());
         Files.writeString(root.resolve("configuration.json"), "{\"schemaVersion\":2,\"schemaVersion\":2}");
         assertThrows(RuntimeException.class, () -> new ConfigurationLoader().load(root, "0.1.0"));
-        load(config());
-        Files.writeString(root.resolve("graphql/read.graphql"), "query unexpected { documents { id } }");
-        assertThrows(ConfigurationException.class, () -> new ConfigurationLoader().load(root, "0.1.0"));
     }
     @Test void rejectsPathTraversalAndSymlinksOutsidePackage() throws Exception {
         var config = config();
         load(config);
-        Files.writeString(root.resolve("operations/read-document.json"), "{\"id\":\"readDocument\",\"file\":\"../../external.graphql\",\"multiaggregate\":false}");
+        Files.writeString(root.resolve("configuration.json"), "{\"schemaVersion\":2,\"compatibility\":{\"corelia\":\">=0.1.0 <1.0.0\"},\"sources\":{\"entities\":\"..\",\"ui\":\"ui\",\"operations\":\"operations\",\"permissions\":\"permissions\"}}");
         assertThrows(ConfigurationException.class, () -> new ConfigurationLoader().load(root, "0.1.0"));
-        var outside = Files.createTempFile(root.getParent(), "outside-", ".graphql");
-        try {
-            Files.writeString(outside, "query readDocument { documents { id } }");
-            Files.createSymbolicLink(root.resolve("graphql/link.graphql"), outside);
-            Files.writeString(root.resolve("operations/read-document.json"), "{\"id\":\"readDocument\",\"file\":\"../graphql/link.graphql\",\"multiaggregate\":false}");
-            assertThrows(ConfigurationException.class, () -> new ConfigurationLoader().load(root, "0.1.0"));
-        } finally { Files.deleteIfExists(outside); }
     }
 }
