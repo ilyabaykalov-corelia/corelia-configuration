@@ -116,7 +116,7 @@ public final class AttributeSchema {
     }
     private static BigDecimal decimal(JsonNode value) { return new BigDecimal(value.asString()); }
     private static void fail(String name, String constraint) { throw new AttributeValidationException("attributes." + name, constraint); }
-    static void keywords(JsonNode node, Set<String> allowed, String path) {
+    public static void keywords(JsonNode node, Set<String> allowed, String path) {
         for (String key : node.propertyNames()) if (!allowed.contains(key)) throw new ConfigurationException("Unsupported keyword " + path + "." + key);
     }
 }
