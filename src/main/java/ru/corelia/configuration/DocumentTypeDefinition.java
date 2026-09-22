@@ -3,14 +3,14 @@ package ru.corelia.configuration;
 import tools.jackson.databind.JsonNode;
 import java.util.*;
 
-/** Immutable customer metadata; callers receive defensive copies of JSON values. */
+/** Неизменяемые доменные метаданные; вызывающие получают защитные копии JSON. */
 public final class DocumentTypeDefinition {
     private final JsonNode definition;
     private final AttributeSchema schema;
-    public DocumentTypeDefinition(JsonNode input, Set<String> operations) {
+    public DocumentTypeDefinition(JsonNode input) {
         if (input == null || !input.isObject()) throw new ConfigurationException("documentTypes entries must be objects");
         definition = input.deepCopy();
-        AttributeSchema.keywords(definition, Set.of("id", "title", "schemaVersion", "schema", "ui", "storage", "workflow", "attachments", "presentation", "normalization", "authorization"), "documentType");
+        AttributeSchema.keywords(definition, Set.of("id", "title", "schemaVersion", "schema", "ui", "workflow", "attachments", "presentation", "normalization", "authorization"), "documentType");
         requiredText(definition, "id"); requiredText(definition, "title");
         if (!id().matches("[A-Za-z_][A-Za-z0-9_]*")) throw new ConfigurationException("Invalid document type identifier");
         if (!definition.path("schemaVersion").isIntegralNumber() || !definition.path("schemaVersion").canConvertToInt() || schemaVersion() < 1)
@@ -63,30 +63,9 @@ public final class DocumentTypeDefinition {
         if (ui.has("dateField") && (!ui.path("dateField").isTextual() || !schema.fields().contains(ui.path("dateField").asString())
                 || !"date".equals(schema.definition().path("properties").path(ui.path("dateField").asString()).path("format").asString())))
             throw new ConfigurationException("Invalid ui.dateField: " + id());
-        JsonNode storage = definition.path("storage");
-        if (!storage.isObject()) throw new ConfigurationException("Missing storage: " + id());
-        AttributeSchema.keywords(storage, Set.of("provider", "entity", "details", "operations", "fields"), "storage");
-        requiredText(storage, "provider"); requiredText(storage, "entity"); requiredText(storage, "details");
-        if (!storage.path("operations").isObject() || storage.path("operations").isEmpty()) throw new ConfigurationException("Missing storage operations");
-        for (var op : storage.path("operations").properties()) {
-            if (!op.getValue().isTextual() || !operations.contains(op.getValue().asString())) throw new ConfigurationException("Unknown storage operation: " + op.getKey());
-        }
-        JsonNode mapping = storage.path("fields");
-        if (!mapping.isObject() || !mapping.propertyNames().equals(new LinkedHashSet<>(schema.fields()))) throw new ConfigurationException("Incomplete storage fields: " + id());
-        Set<String> targets = new HashSet<>();
-        for (JsonNode field : mapping) if (!field.isTextual() || !field.asString().matches("[A-Za-z_][A-Za-z0-9_]*") || Set.of("id", "status", "document").contains(field.asString()) || !targets.add(field.asString())) throw new ConfigurationException("Invalid or duplicate storage field mapping");
         JsonNode workflow = definition.path("workflow");
         if (!workflow.isObject()) throw new ConfigurationException("Missing workflow: " + id());
-        AttributeSchema.keywords(workflow, Set.of("processes", "actions", "creationSource", "creationAction", "externalFields", "completion", "terminalStatuses"), "workflow");
-        if (!workflow.path("processes").isObject() || !workflow.path("actions").isObject()) throw new ConfigurationException("Invalid workflow");
-        for (var process : workflow.path("processes").properties()) requiredText(workflow.path("processes"), process.getKey());
-        for (JsonNode alias : workflow.path("actions")) if (!alias.isTextual() || !workflow.path("processes").has(alias.asString())) throw new ConfigurationException("Unknown process alias: " + id());
-        if (workflow.has("creationSource") && !Set.of("platform-settings", "configuration").contains(workflow.path("creationSource").asString())) throw new ConfigurationException("Invalid creationSource");
-        if ("configuration".equals(workflow.path("creationSource").asString()) && !workflow.path("actions").has(requiredText(workflow, "creationAction"))) throw new ConfigurationException("Unknown creation action");
-        if (workflow.has("externalFields")) {
-            if (!workflow.path("externalFields").isArray()) throw new ConfigurationException("Invalid externalFields");
-            for (JsonNode field : workflow.path("externalFields")) if (!field.isTextual() || !schema.fields().contains(field.asString())) throw new ConfigurationException("Unknown external field");
-        }
+        AttributeSchema.keywords(workflow, Set.of("completion", "terminalStatuses"), "workflow");
         if (workflow.has("terminalStatuses")) {
             if (!workflow.path("terminalStatuses").isArray()) throw new ConfigurationException("Invalid terminalStatuses");
             for (JsonNode status : workflow.path("terminalStatuses")) if (!status.isTextual() || !definition.path("presentation").path("statuses").has(status.asString())) throw new ConfigurationException("Unknown terminal status");
@@ -130,7 +109,6 @@ public final class DocumentTypeDefinition {
     public JsonNode presentation() { return definition.path("presentation").deepCopy(); }
     public JsonNode definition() { return definition.deepCopy(); }
     public JsonNode ui() { return definition.path("ui").deepCopy(); }
-    public JsonNode storage() { return definition.path("storage").deepCopy(); }
     public JsonNode workflow() { return definition.path("workflow").deepCopy(); }
     public JsonNode attachments() { return definition.path("attachments").deepCopy(); }
     static String requiredText(JsonNode node, String key) {

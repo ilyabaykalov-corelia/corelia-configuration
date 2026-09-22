@@ -10,12 +10,13 @@ import java.nio.file.*;
 import java.util.*;
 import java.util.regex.Pattern;
 
-/** Startup-only loading. Source layouts are normalized before they reach Corelia services. */
+/** Загрузка только при старте. Исходная структура нормализуется до передачи сервисам Corelia. */
 public final class ConfigurationLoader {
     private static final JsonMapper JSON = JsonMapper.builder().enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build();
     private static final Pattern ID = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
-    public record LoadedConfiguration(DocumentTypeRegistry documentTypes, Map<String, Operation> operations) {
+    public record LoadedConfiguration(DocumentTypeRegistry documentTypes, Map<String, JsonNode> providerBindings, Map<String, Operation> operations) {
         public LoadedConfiguration {
+            providerBindings = Collections.unmodifiableMap(new LinkedHashMap<>(providerBindings));
             operations = Collections.unmodifiableMap(new LinkedHashMap<>(operations));
         }
     }
@@ -50,6 +51,7 @@ public final class ConfigurationLoader {
         var ui = fragmentsById(root, scan(roots.get("ui"), "ui"), "ui", Set.of("id", "ui"));
         var permissions = fragmentsById(root, scan(roots.get("permissions"), "permissions"), "permissions", Set.of("id", "authorization"));
         var definitions = new ArrayList<DocumentTypeDefinition>();
+        var bindings = new LinkedHashMap<String, JsonNode>();
         for (var entry : entities.entrySet()) {
             String id = entry.getKey(); ObjectNode entity = (ObjectNode) entry.getValue().node().deepCopy();
             Fragment uiFragment = ui.remove(id), permissionFragment = permissions.remove(id);
@@ -57,13 +59,22 @@ public final class ConfigurationLoader {
             if (permissionFragment == null) throw new ConfigurationException(entry.getValue().display() + ": Missing permissions fragment for '" + id + "'");
             entity.set("ui", uiFragment.node().path("ui").deepCopy());
             entity.set("authorization", permissionFragment.node().path("authorization").deepCopy());
-            definitions.add(new DocumentTypeDefinition(entity, operations.keySet()));
+            JsonNode storage = entity.remove("storage");
+            JsonNode workflow = entity.path("workflow");
+            var binding = JSON.createObjectNode();
+            binding.set("storage", storage == null ? JSON.getNodeFactory().nullNode() : storage);
+            binding.set("workflow", workflow.deepCopy());
+            bindings.put(id, binding);
+            var coreWorkflow = JSON.createObjectNode();
+            for (String field : List.of("completion", "terminalStatuses")) if (workflow.has(field)) coreWorkflow.set(field, workflow.path(field).deepCopy());
+            entity.set("workflow", coreWorkflow);
+            definitions.add(new DocumentTypeDefinition(entity));
         }
         if (!ui.isEmpty()) throw new ConfigurationException(ui.values().iterator().next().display() + ": Unknown entity '" + ui.keySet().iterator().next() + "'");
         if (!permissions.isEmpty()) throw new ConfigurationException(permissions.values().iterator().next().display() + ": Unknown entity '" + permissions.keySet().iterator().next() + "'");
         definitions.sort(Comparator.comparing(DocumentTypeDefinition::id));
         var registry = new DocumentTypeRegistry(definitions);
-        return new LoadedConfiguration(registry, operations);
+        return new LoadedConfiguration(registry, bindings, operations);
     }
 
     private Map<String, Operation> readV2Operations(Path root, List<Path> files) throws IOException {
