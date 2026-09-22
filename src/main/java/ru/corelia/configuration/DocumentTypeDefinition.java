@@ -51,7 +51,7 @@ public final class DocumentTypeDefinition {
         }
         JsonNode ui = definition.path("ui");
         if (!ui.isObject()) throw new ConfigurationException("Missing ui: " + id());
-        AttributeSchema.keywords(ui, Set.of("columns", "fields", "searchFields", "dateField", "sortFields"), "ui");
+        AttributeSchema.keywords(ui, Set.of("columns", "fields", "searchFields", "dateField", "sortFields", "masks"), "ui");
         for (String key : List.of("columns", "fields", "searchFields", "sortFields")) {
             if (!ui.path(key).isArray()) throw new ConfigurationException("ui." + key + " must be an array");
             Set<String> seen = new HashSet<>();
@@ -63,6 +63,14 @@ public final class DocumentTypeDefinition {
         if (ui.has("dateField") && (!ui.path("dateField").isTextual() || !schema.fields().contains(ui.path("dateField").asString())
                 || !"date".equals(schema.definition().path("properties").path(ui.path("dateField").asString()).path("format").asString())))
             throw new ConfigurationException("Invalid ui.dateField: " + id());
+        if (ui.has("masks")) {
+            if (!ui.path("masks").isObject()) throw new ConfigurationException("Invalid ui.masks: " + id());
+            for (var mask : ui.path("masks").properties()) {
+                if (!schema.fields().contains(mask.getKey()) || !mask.getValue().isTextual()
+                        || mask.getValue().asString().isBlank() || !mask.getValue().asString().contains("0"))
+                    throw new ConfigurationException("Invalid ui mask: " + id() + "." + mask.getKey());
+            }
+        }
         JsonNode workflow = definition.path("workflow");
         if (!workflow.isObject()) throw new ConfigurationException("Missing workflow: " + id());
         AttributeSchema.keywords(workflow, Set.of("completion", "terminalStatuses"), "workflow");

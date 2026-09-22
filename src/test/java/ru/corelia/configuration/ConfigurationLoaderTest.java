@@ -79,6 +79,14 @@ class ConfigurationLoaderTest {
             assertThrows(ConfigurationException.class, () -> load(config), reference);
         }
     }
+    @Test void acceptsOptionalMasksOnlyForConfiguredFields() throws Exception {
+        var config = config();
+        ((ObjectNode) type(config).path("ui")).putObject("masks").put("number", "000-000");
+        assertEquals("000-000", load(config).documentTypes().require("TEST_FORM").ui().path("masks").path("number").asString());
+        var invalid = config();
+        ((ObjectNode) type(invalid).path("ui")).putObject("masks").put("missing", "000");
+        assertThrows(ConfigurationException.class, () -> load(invalid));
+    }
     @Test void rejectsVersionMismatchAndMalformedAttachmentPolicy() throws Exception {
         var config = config(); load(config);
         Files.writeString(root.resolve("configuration.json"), "{\"schemaVersion\":1}");
