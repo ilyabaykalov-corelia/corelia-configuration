@@ -83,12 +83,22 @@ public final class DocumentTypeDefinition {
         }
         JsonNode attachments = definition.path("attachments");
         if (!attachments.isObject()) throw new ConfigurationException("Missing attachments: " + id());
-        AttributeSchema.keywords(attachments, Set.of("enabled", "initialRequired", "maxCount"), "attachments");
+        AttributeSchema.keywords(attachments, Set.of("enabled", "initialRequired", "maxCount", "maxSizeBytes", "allowedExtensions"), "attachments");
         if (!attachments.path("enabled").isBoolean() || !attachments.path("initialRequired").isBoolean()
                 || !attachments.path("maxCount").isIntegralNumber() || !attachments.path("maxCount").canConvertToInt() || attachments.path("maxCount").asInt() < 0
                 || attachments.path("initialRequired").asBoolean() && (!attachments.path("enabled").asBoolean() || attachments.path("maxCount").asInt() == 0)
                 || !attachments.path("enabled").asBoolean() && attachments.path("maxCount").asInt() != 0)
             throw new ConfigurationException("Invalid attachment policy: " + id());
+        var attachmentPolicy = (tools.jackson.databind.node.ObjectNode) attachments;
+        if (!attachmentPolicy.has("maxSizeBytes")) attachmentPolicy.put("maxSizeBytes", 10L * 1024 * 1024);
+        if (!attachmentPolicy.path("maxSizeBytes").isIntegralNumber() || !attachmentPolicy.path("maxSizeBytes").canConvertToLong()
+                || attachmentPolicy.path("maxSizeBytes").asLong() < 1 || attachmentPolicy.path("maxSizeBytes").asLong() > 1024L * 1024 * 1024)
+            throw new ConfigurationException("Invalid attachment maxSizeBytes: " + id());
+        if (!attachmentPolicy.has("allowedExtensions")) attachmentPolicy.putArray("allowedExtensions");
+        if (!attachmentPolicy.path("allowedExtensions").isArray())
+            throw new ConfigurationException("Invalid attachment allowedExtensions: " + id());
+        for (JsonNode extension : attachmentPolicy.path("allowedExtensions"))
+            if (!extension.isTextual() || !extension.asString().matches("[a-z0-9]+")) throw new ConfigurationException("Invalid attachment extension: " + id());
     }
     public String id() { return definition.path("id").asString(); }
     public String title() { return definition.path("title").asString(); }
