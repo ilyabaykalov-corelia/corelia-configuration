@@ -17,8 +17,8 @@ class ConfigurationLoaderTest {
              "documentTypes":[{"id":"TEST_FORM","title":"Test form","schemaVersion":1,
                "schema":{"type":"object","additionalProperties":false,"required":["number"],
                  "properties":{"number":{"type":"string","minLength":1,"maxLength":4},
-                   "date":{"type":"string","format":"date"},"amount":{"type":"number","minimum":0},
-                   "year":{"type":"integer","minimum":1000,"maximum":9999},"approved":{"type":"boolean"}}},
+                   "date":{"type":"string","format":"date"},"amount":{"type":"number","min":0},
+                   "year":{"type":"integer","min":1000,"max":9999},"approved":{"type":"boolean"}}},
                "ui":{"columns":["number"],"fields":["number","date","amount","year","approved"],"searchFields":["number"],"sortFields":["date"],"dateField":"date"},
                "storage":{"provider":"test","entity":"TestForm","details":"details","operations":{"get":"readDocument"},
                  "fields":{"number":"number","date":"date","amount":"amount","year":"year","approved":"approved"}},
@@ -85,6 +85,17 @@ class ConfigurationLoaderTest {
         assertEquals("000-000", load(config).documentTypes().require("TEST_FORM").ui().path("masks").path("number").asString());
         var invalid = config();
         ((ObjectNode) type(invalid).path("ui")).putObject("masks").put("missing", "000");
+        assertThrows(ConfigurationException.class, () -> load(invalid));
+    }
+    @Test void acceptsInitialValuesAndLimitsNowToDateFields() throws Exception {
+        var config = config();
+        ((ObjectNode) type(config).path("ui")).putObject("initialValues").put("date", "now").put("year", 2020);
+        assertEquals("now", load(config).documentTypes().require("TEST_FORM").ui().path("initialValues").path("date").asString());
+        var fixedDate = config();
+        ((ObjectNode) type(fixedDate).path("ui")).putObject("initialValues").put("date", "2026-09-23");
+        assertEquals("2026-09-23", load(fixedDate).documentTypes().require("TEST_FORM").ui().path("initialValues").path("date").asString());
+        var invalid = config();
+        ((ObjectNode) type(invalid).path("ui")).putObject("initialValues").put("number", "now");
         assertThrows(ConfigurationException.class, () -> load(invalid));
     }
     @Test void rejectsVersionMismatchAndMalformedAttachmentPolicy() throws Exception {

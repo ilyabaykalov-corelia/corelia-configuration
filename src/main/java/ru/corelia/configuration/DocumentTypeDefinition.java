@@ -51,7 +51,7 @@ public final class DocumentTypeDefinition {
         }
         JsonNode ui = definition.path("ui");
         if (!ui.isObject()) throw new ConfigurationException("Missing ui: " + id());
-        AttributeSchema.keywords(ui, Set.of("columns", "fields", "searchFields", "dateField", "sortFields", "masks"), "ui");
+        AttributeSchema.keywords(ui, Set.of("columns", "fields", "searchFields", "dateField", "sortFields", "masks", "initialValues"), "ui");
         for (String key : List.of("columns", "fields", "searchFields", "sortFields")) {
             if (!ui.path(key).isArray()) throw new ConfigurationException("ui." + key + " must be an array");
             Set<String> seen = new HashSet<>();
@@ -69,6 +69,21 @@ public final class DocumentTypeDefinition {
                 if (!schema.fields().contains(mask.getKey()) || !mask.getValue().isTextual()
                         || mask.getValue().asString().isBlank() || !mask.getValue().asString().contains("0"))
                     throw new ConfigurationException("Invalid ui mask: " + id() + "." + mask.getKey());
+            }
+        }
+        if (ui.has("initialValues")) {
+            if (!ui.path("initialValues").isObject()) throw new ConfigurationException("Invalid ui.initialValues: " + id());
+            for (var initialValue : ui.path("initialValues").properties()) {
+                String field = initialValue.getKey(); JsonNode value = initialValue.getValue();
+                JsonNode fieldDefinition = schema.definition().path("properties").path(field);
+                if (!schema.fields().contains(field)
+                        || value.isTextual() && "now".equals(value.asString()) && !"date".equals(fieldDefinition.path("format").asString()))
+                    throw new ConfigurationException("Invalid ui initial value: " + id() + "." + field);
+                if (!(value.isTextual() && "now".equals(value.asString()))) {
+                    var attributes = tools.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+                    attributes.set(field, value);
+                    schema.validate(attributes, true);
+                }
             }
         }
         JsonNode workflow = definition.path("workflow");
