@@ -11,7 +11,7 @@ import java.util.regex.PatternSyntaxException;
 /** Strict scalar-object JSON Schema profile. Unsupported keywords fail at load time. */
 public final class AttributeSchema {
     private static final Set<String> ROOT = Set.of("$schema", "type", "properties", "required", "additionalProperties", "title", "description");
-    private static final Set<String> FIELD = Set.of("type", "title", "description", "minLength", "maxLength", "pattern", "format", "minimum", "maximum", "enum");
+    private static final Set<String> FIELD = Set.of("type", "title", "description", "minLength", "maxLength", "pattern", "format", "min", "max", "enum");
     private final JsonNode schema;
     private final Set<String> required;
     private final Map<String, Pattern> patterns;
@@ -44,13 +44,13 @@ public final class AttributeSchema {
                 if (field.has(k) && (!type.equals("string") || !field.path(k).isIntegralNumber() || !field.path(k).canConvertToInt() || field.path(k).asInt() < 0))
                     throw new ConfigurationException("Invalid " + k + ": " + name);
             }
-            for (String k : List.of("minimum", "maximum")) {
+            for (String k : List.of("min", "max")) {
                 if (field.has(k) && (!(type.equals("integer") || type.equals("number")) || !field.path(k).isNumber()))
                     throw new ConfigurationException("Invalid " + k + ": " + name);
             }
             if (field.has("minLength") && field.has("maxLength") && field.path("minLength").asInt() > field.path("maxLength").asInt())
                 throw new ConfigurationException("Contradictory lengths: " + name);
-            if (field.has("minimum") && field.has("maximum") && decimal(field.path("minimum")).compareTo(decimal(field.path("maximum"))) > 0)
+            if (field.has("min") && field.has("max") && decimal(field.path("min")).compareTo(decimal(field.path("max"))) > 0)
                 throw new ConfigurationException("Contradictory bounds: " + name);
             if (field.has("format") && (!type.equals("string") || !field.path("format").isTextual() || !"date".equals(field.path("format").asString())))
                 throw new ConfigurationException("Unsupported format: " + name);
@@ -94,8 +94,8 @@ public final class AttributeSchema {
                 }
             }
             if (value.isNumber()) {
-                if (field.has("minimum") && decimal(value).compareTo(decimal(field.path("minimum"))) < 0) fail(name, "minimum");
-                if (field.has("maximum") && decimal(value).compareTo(decimal(field.path("maximum"))) > 0) fail(name, "maximum");
+                if (field.has("min") && decimal(value).compareTo(decimal(field.path("min"))) < 0) fail(name, "min");
+                if (field.has("max") && decimal(value).compareTo(decimal(field.path("max"))) > 0) fail(name, "max");
             }
             if (field.has("enum")) {
                 boolean found = false;
@@ -116,7 +116,7 @@ public final class AttributeSchema {
     }
     private static BigDecimal decimal(JsonNode value) { return new BigDecimal(value.asString()); }
     private static void fail(String name, String constraint) { throw new AttributeValidationException("attributes." + name, constraint); }
-    static void keywords(JsonNode node, Set<String> allowed, String path) {
+    public static void keywords(JsonNode node, Set<String> allowed, String path) {
         for (String key : node.propertyNames()) if (!allowed.contains(key)) throw new ConfigurationException("Unsupported keyword " + path + "." + key);
     }
 }

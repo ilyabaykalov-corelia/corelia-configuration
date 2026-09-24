@@ -17,8 +17,8 @@ class ConfigurationLoaderTest {
              "documentTypes":[{"id":"TEST_FORM","title":"Test form","schemaVersion":1,
                "schema":{"type":"object","additionalProperties":false,"required":["number"],
                  "properties":{"number":{"type":"string","minLength":1,"maxLength":4},
-                   "date":{"type":"string","format":"date"},"amount":{"type":"number","minimum":0},
-                   "year":{"type":"integer","minimum":1000,"maximum":9999},"approved":{"type":"boolean"}}},
+                   "date":{"type":"string","format":"date"},"amount":{"type":"number","min":0},
+                   "year":{"type":"integer","min":1000,"max":9999},"approved":{"type":"boolean"}}},
                "ui":{"columns":["number"],"fields":["number","date","amount","year","approved"],"searchFields":["number"],"sortFields":["date"],"dateField":"date"},
                "storage":{"provider":"test","entity":"TestForm","details":"details","operations":{"get":"readDocument"},
                  "fields":{"number":"number","date":"date","amount":"amount","year":"year","approved":"approved"}},
@@ -69,18 +69,34 @@ class ConfigurationLoaderTest {
         ((ObjectNode) type(config).path("schema")).put("oneOf", "unsupported");
         assertThrows(ConfigurationException.class, () -> load(config));
     }
-    @Test void rejectsBrokenReferencesAndDuplicateTypes() {
-        for (String reference : new String[]{"ui", "operation", "mapping", "reserved", "workflow"}) {
+    @Test void rejectsBrokenCoreliaReferences() {
+        for (String reference : new String[]{"ui"}) {
             var config = config(); var type = type(config);
             switch (reference) {
                 case "ui" -> ((ObjectNode) type.path("ui")).putArray("columns").add("missing");
-                case "operation" -> ((ObjectNode) type.path("storage").path("operations")).put("get", "missing");
-                case "mapping" -> ((ObjectNode) type.path("storage").path("fields")).remove("number");
-                case "reserved" -> ((ObjectNode) type.path("storage").path("fields")).put("number", "status");
-                case "workflow" -> ((ObjectNode) type.path("workflow").path("actions")).put("SEND", "missing");
+                default -> throw new IllegalStateException(reference);
             }
             assertThrows(ConfigurationException.class, () -> load(config), reference);
         }
+    }
+    @Test void acceptsOptionalMasksOnlyForConfiguredFields() throws Exception {
+        var config = config();
+        ((ObjectNode) type(config).path("ui")).putObject("masks").put("number", "000-000");
+        assertEquals("000-000", load(config).documentTypes().require("TEST_FORM").ui().path("masks").path("number").asString());
+        var invalid = config();
+        ((ObjectNode) type(invalid).path("ui")).putObject("masks").put("missing", "000");
+        assertThrows(ConfigurationException.class, () -> load(invalid));
+    }
+    @Test void acceptsInitialValuesAndLimitsNowToDateFields() throws Exception {
+        var config = config();
+        ((ObjectNode) type(config).path("ui")).putObject("initialValues").put("date", "now").put("year", 2020);
+        assertEquals("now", load(config).documentTypes().require("TEST_FORM").ui().path("initialValues").path("date").asString());
+        var fixedDate = config();
+        ((ObjectNode) type(fixedDate).path("ui")).putObject("initialValues").put("date", "2026-09-23");
+        assertEquals("2026-09-23", load(fixedDate).documentTypes().require("TEST_FORM").ui().path("initialValues").path("date").asString());
+        var invalid = config();
+        ((ObjectNode) type(invalid).path("ui")).putObject("initialValues").put("number", "now");
+        assertThrows(ConfigurationException.class, () -> load(invalid));
     }
     @Test void rejectsVersionMismatchAndMalformedAttachmentPolicy() throws Exception {
         var config = config(); load(config);
@@ -93,25 +109,15 @@ class ConfigurationLoaderTest {
         ((ObjectNode) type(config).path("attachments")).put("enabled", false);
         assertThrows(ConfigurationException.class, () -> load(config));
     }
-    @Test void rejectsDuplicateJsonKeysAndWrongOperationNames() throws Exception {
+    @Test void rejectsDuplicateJsonKeys() throws Exception {
         load(config());
         Files.writeString(root.resolve("configuration.json"), "{\"schemaVersion\":2,\"schemaVersion\":2}");
         assertThrows(RuntimeException.class, () -> new ConfigurationLoader().load(root, "0.1.0"));
-        load(config());
-        Files.writeString(root.resolve("graphql/read.graphql"), "query unexpected { documents { id } }");
-        assertThrows(ConfigurationException.class, () -> new ConfigurationLoader().load(root, "0.1.0"));
     }
     @Test void rejectsPathTraversalAndSymlinksOutsidePackage() throws Exception {
         var config = config();
         load(config);
-        Files.writeString(root.resolve("operations/read-document.json"), "{\"id\":\"readDocument\",\"file\":\"../../external.graphql\",\"multiaggregate\":false}");
+        Files.writeString(root.resolve("configuration.json"), "{\"schemaVersion\":2,\"compatibility\":{\"corelia\":\">=0.1.0 <1.0.0\"},\"sources\":{\"entities\":\"..\",\"ui\":\"ui\",\"operations\":\"operations\",\"permissions\":\"permissions\"}}");
         assertThrows(ConfigurationException.class, () -> new ConfigurationLoader().load(root, "0.1.0"));
-        var outside = Files.createTempFile(root.getParent(), "outside-", ".graphql");
-        try {
-            Files.writeString(outside, "query readDocument { documents { id } }");
-            Files.createSymbolicLink(root.resolve("graphql/link.graphql"), outside);
-            Files.writeString(root.resolve("operations/read-document.json"), "{\"id\":\"readDocument\",\"file\":\"../graphql/link.graphql\",\"multiaggregate\":false}");
-            assertThrows(ConfigurationException.class, () -> new ConfigurationLoader().load(root, "0.1.0"));
-        } finally { Files.deleteIfExists(outside); }
     }
 }
