@@ -8,7 +8,7 @@ import java.util.*;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 
-/** Strict scalar-object JSON Schema profile. Unsupported keywords fail at load time. */
+/** Строгий профиль JSON Schema для scalar-object; неподдерживаемые ключи отклоняются при загрузке. */
 public final class AttributeSchema {
     private static final Set<String> ROOT = Set.of("$schema", "type", "properties", "required", "additionalProperties", "title", "description");
     private static final Set<String> FIELD = Set.of("type", "title", "description", "minLength", "maxLength", "pattern", "format", "min", "max", "enum");
@@ -16,6 +16,7 @@ public final class AttributeSchema {
     private final Set<String> required;
     private final Map<String, Pattern> patterns;
 
+    /** Создаёт валидатор из schema definition и сразу проверяет совместимость профиля. */
     public AttributeSchema(JsonNode input) {
         if (input == null || !input.isObject()) throw new ConfigurationException("schema must be an object");
         schema = input.deepCopy();
@@ -69,10 +70,11 @@ public final class AttributeSchema {
         }
     }
 
+    /** Возвращает защитную копию исходного schema definition. */
     public JsonNode definition() { return schema.deepCopy(); }
     public List<String> fields() { return List.copyOf(schema.path("properties").propertyNames()); }
 
-    /** A partial command checks supplied values; application validates the merged snapshot too. */
+    /** Частичная команда проверяет только переданные значения; приложение также валидирует итоговый snapshot. */
     public JsonNode validate(JsonNode attributes, boolean partial) {
         if (attributes == null || !attributes.isObject()) throw new AttributeValidationException("attributes", "must be an object");
         for (String field : attributes.propertyNames()) if (!schema.path("properties").has(field)) fail(field, "unknown attribute");
@@ -116,6 +118,7 @@ public final class AttributeSchema {
     }
     private static BigDecimal decimal(JsonNode value) { return new BigDecimal(value.asString()); }
     private static void fail(String name, String constraint) { throw new AttributeValidationException("attributes." + name, constraint); }
+    /** Проверяет, что объект содержит только разрешённые ключи конкретного профиля. */
     public static void keywords(JsonNode node, Set<String> allowed, String path) {
         for (String key : node.propertyNames()) if (!allowed.contains(key)) throw new ConfigurationException("Unsupported keyword " + path + "." + key);
     }
