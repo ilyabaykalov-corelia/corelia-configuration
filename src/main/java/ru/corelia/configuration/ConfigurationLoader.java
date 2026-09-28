@@ -14,6 +14,11 @@ import java.util.regex.Pattern;
 public final class ConfigurationLoader {
     private static final JsonMapper JSON = JsonMapper.builder().enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build();
     private static final Pattern ID = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
+    /** Нормализованный результат загрузки configuration package.
+     * @param documentTypes реестр доступных типов
+     * @param providerBindings storage/workflow binding, изолированные от domain definition
+     * @param packageRoot канонический корень проверенного пакета
+     */
     public record LoadedConfiguration(DocumentTypeRegistry documentTypes, Map<String, JsonNode> providerBindings, Path packageRoot) {
         public LoadedConfiguration {
             providerBindings = Collections.unmodifiableMap(new LinkedHashMap<>(providerBindings));
@@ -21,6 +26,7 @@ public final class ConfigurationLoader {
         }
     }
 
+    /** Загружает package версии 2, проверяя пути, fragments и совместимость версии Corelia. */
     public LoadedConfiguration load(Path directory, String productVersion) {
         try {
             Path root = directory.toRealPath();
