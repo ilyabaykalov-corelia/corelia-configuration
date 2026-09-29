@@ -88,7 +88,7 @@ public final class DocumentTypeDefinition {
         }
         JsonNode workflow = definition.path("workflow");
         if (!workflow.isObject()) throw new ConfigurationException("Missing workflow: " + id());
-        AttributeSchema.keywords(workflow, Set.of("completion", "terminalStatuses"), "workflow");
+        AttributeSchema.keywords(workflow, Set.of("completion", "terminalStatuses", "commands"), "workflow");
         if (workflow.has("terminalStatuses")) {
             if (!workflow.path("terminalStatuses").isArray()) throw new ConfigurationException("Invalid terminalStatuses");
             for (JsonNode status : workflow.path("terminalStatuses")) if (!status.isTextual() || !definition.path("presentation").path("statuses").has(status.asString())) throw new ConfigurationException("Unknown terminal status");
@@ -103,6 +103,21 @@ public final class DocumentTypeDefinition {
                 for (JsonNode value : completion.path(key)) if (!value.isTextual() || value.asString().isBlank()) throw new ConfigurationException("Invalid completion value");
             }
             if (!completion.path("autoStart").isBoolean()) throw new ConfigurationException("Invalid completion autoStart");
+        }
+        if (workflow.has("commands")) {
+            JsonNode commands = workflow.path("commands");
+            if (!commands.isObject()) throw new ConfigurationException("Invalid workflow commands");
+            Set<String> known = Set.of("takeInWork", "submit", "approve", "returnForRevision", "reject", "store");
+            for (var command : commands.properties()) {
+                if (!known.contains(command.getKey()) || !command.getValue().isObject()) throw new ConfigurationException("Invalid workflow command");
+                AttributeSchema.keywords(command.getValue(), Set.of("from", "to"), "workflow command");
+                JsonNode from = command.getValue().path("from");
+                if (!from.isArray() || from.isEmpty()) throw new ConfigurationException("Invalid workflow command source status");
+                for (JsonNode status : from) if (!status.isTextual() || !definition.path("presentation").path("statuses").has(status.asString()))
+                    throw new ConfigurationException("Unknown workflow command source status");
+                String target = requiredText(command.getValue(), "to");
+                if (!definition.path("presentation").path("statuses").has(target)) throw new ConfigurationException("Unknown workflow command target status");
+            }
         }
         JsonNode attachments = definition.path("attachments");
         if (!attachments.isObject()) throw new ConfigurationException("Missing attachments: " + id());

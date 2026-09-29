@@ -70,7 +70,7 @@ public final class ConfigurationLoader {
             binding.set("workflow", workflow.deepCopy());
             bindings.put(id, binding);
             var coreWorkflow = JSON.createObjectNode();
-            for (String field : List.of("completion", "terminalStatuses")) if (workflow.has(field)) coreWorkflow.set(field, workflow.path(field).deepCopy());
+            for (String field : List.of("completion", "terminalStatuses", "commands")) if (workflow.has(field)) coreWorkflow.set(field, workflow.path(field).deepCopy());
             entity.set("workflow", coreWorkflow);
             definitions.add(new DocumentTypeDefinition(entity));
         }
