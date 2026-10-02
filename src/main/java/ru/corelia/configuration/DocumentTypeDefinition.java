@@ -143,7 +143,7 @@ public final class DocumentTypeDefinition {
         }
         JsonNode attachments = definition.path("attachments");
         if (!attachments.isObject()) throw new ConfigurationException("Missing attachments: " + id());
-        AttributeSchema.keywords(attachments, Set.of("enabled", "initialRequired", "maxCount", "maxSizeBytes", "allowedExtensions"), "attachments");
+        AttributeSchema.keywords(attachments, Set.of("enabled", "initialRequired", "maxCount", "maxSizeBytes", "allowedExtensions", "allowedMimeTypes"), "attachments");
         if (!attachments.path("enabled").isBoolean() || !attachments.path("initialRequired").isBoolean()
                 || !attachments.path("maxCount").isIntegralNumber() || !attachments.path("maxCount").canConvertToInt() || attachments.path("maxCount").asInt() < 0
                 || attachments.path("initialRequired").asBoolean() && (!attachments.path("enabled").asBoolean() || attachments.path("maxCount").asInt() == 0)
@@ -159,6 +159,14 @@ public final class DocumentTypeDefinition {
             throw new ConfigurationException("Invalid attachment allowedExtensions: " + id());
         for (JsonNode extension : attachmentPolicy.path("allowedExtensions"))
             if (!extension.isTextual() || !extension.asString().matches("[a-z0-9]+")) throw new ConfigurationException("Invalid attachment extension: " + id());
+        if (!attachmentPolicy.has("allowedMimeTypes")) attachmentPolicy.putArray("allowedMimeTypes");
+        if (!attachmentPolicy.path("allowedMimeTypes").isArray())
+            throw new ConfigurationException("Invalid attachment allowedMimeTypes: " + id());
+        var mimeTypes = new HashSet<String>();
+        for (JsonNode mimeType : attachmentPolicy.path("allowedMimeTypes"))
+            if (!mimeType.isTextual() || !mimeType.asString().matches("[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+")
+                    || !mimeTypes.add(mimeType.asString()))
+                throw new ConfigurationException("Invalid attachment MIME type: " + id());
     }
     public String id() { return definition.path("id").asString(); }
     public String title() { return definition.path("title").asString(); }

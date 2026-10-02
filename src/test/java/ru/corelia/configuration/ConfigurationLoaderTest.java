@@ -142,7 +142,7 @@ class ConfigurationLoaderTest {
                  "presentation":{"statuses":{"CREATED":"Created"},"aliases":{},"tones":{},"initialStatus":"CREATED"},
                  "ui":{"createForm":{"fields":["number"]},"viewCard":{"fields":["number"]},"editCard":{"fields":["number"]},"table":{"columns":[{"field":"number","label":"Number"}]},"sections":[],"tabs":[]},
                  "search":{"filterableFields":["number"],"sortableFields":["number"],"indexHints":["number"]},
-                 "attachments":{"enabled":true,"initialRequired":false,"maxCount":2}}
+                 "attachments":{"enabled":true,"initialRequired":false,"maxCount":2,"allowedMimeTypes":["application/pdf"]}}
                 """);
         Files.writeString(root.resolve("workflows/v3-form.json"), """
                 {"id":"V3_FORM","processKey":"v3_form_process","bpmnFile":"bpmn/v3-form.bpmn","startActions":["create"]}
@@ -155,6 +155,7 @@ class ConfigurationLoaderTest {
         var type = loaded.documentTypes().require("V3_FORM");
         assertEquals("number", type.ui().path("table").path("columns").get(0).path("field").asString());
         assertEquals("number", type.ui().path("indexHints").get(0).asString());
+        assertEquals("application/pdf", type.attachments().path("allowedMimeTypes").get(0).asString());
         assertEquals("v3_form_process", loaded.providerBindings().get("V3_FORM").path("workflow").path("flowable").path("definitionKey").asString());
         assertEquals(Set.of("operator"), loaded.permissionGrants().get("document:V3_FORM:create"));
     }
