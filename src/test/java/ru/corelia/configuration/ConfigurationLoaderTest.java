@@ -140,7 +140,7 @@ class ConfigurationLoaderTest {
                 {"id":"V3_FORM","title":"V3 form","schemaVersion":1,
                  "attributes":{"type":"object","additionalProperties":false,"required":["number"],"properties":{"number":{"type":"string","minLength":1}}},
                  "presentation":{"statuses":{"CREATED":"Created"},"aliases":{},"tones":{},"initialStatus":"CREATED"},
-                 "ui":{"createForm":{"fields":["number"]},"viewCard":{"fields":["number"]},"editCard":{"fields":["number"]},"table":{"columns":[{"field":"number","label":"Number"}]},"sections":[],"tabs":[]},
+                 "ui":{"createForm":{"fields":["number"]},"viewCard":{"fields":["number"]},"editCard":{"fields":["number"]},"table":{"columns":[{"field":"number","label":"Number"}]},"sections":[],"tabs":[],"masks":{"number":"000"}},
                  "search":{"filterableFields":["number"],"sortableFields":["number"],"indexHints":["number"]},
                  "attachments":{"enabled":true,"initialRequired":false,"maxCount":2,"allowedMimeTypes":["application/pdf"]}}
                 """);
@@ -155,6 +155,7 @@ class ConfigurationLoaderTest {
         var type = loaded.documentTypes().require("V3_FORM");
         assertEquals("number", type.ui().path("table").path("columns").get(0).path("field").asString());
         assertEquals("number", type.ui().path("indexHints").get(0).asString());
+        assertEquals("000", type.ui().path("masks").path("number").asString());
         assertEquals("application/pdf", type.attachments().path("allowedMimeTypes").get(0).asString());
         assertEquals("v3_form_process", loaded.providerBindings().get("V3_FORM").path("workflow").path("flowable").path("definitionKey").asString());
         assertEquals(Set.of("operator"), loaded.permissionGrants().get("document:V3_FORM:create"));

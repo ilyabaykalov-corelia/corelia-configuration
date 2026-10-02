@@ -142,7 +142,7 @@ public final class ConfigurationLoader {
 
     private ObjectNode normalizedV3Ui(String id, JsonNode ui, JsonNode search) {
         if (!ui.isObject()) throw new ConfigurationException("Missing ui: " + id);
-        AttributeSchema.keywords(ui, Set.of("createForm", "viewCard", "editCard", "table", "sections", "tabs"), "ui");
+        AttributeSchema.keywords(ui, Set.of("createForm", "viewCard", "editCard", "table", "sections", "tabs", "dateField", "masks", "initialValues"), "ui");
         JsonNode createForm = ui.path("createForm"), viewCard = ui.path("viewCard"), editCard = ui.path("editCard"), table = ui.path("table");
         for (JsonNode form : List.of(createForm, viewCard, editCard)) {
             if (!form.isObject() || !form.path("fields").isArray()) throw new ConfigurationException("V3 form must declare fields: " + id);
@@ -165,6 +165,7 @@ public final class ConfigurationLoader {
         normalized.set("sections", ui.path("sections").deepCopy());
         normalized.set("tabs", ui.path("tabs").deepCopy());
         normalized.set("indexHints", search.path("indexHints").deepCopy());
+        for (String key : List.of("dateField", "masks", "initialValues")) if (ui.has(key)) normalized.set(key, ui.path(key).deepCopy());
         return normalized;
     }
 
