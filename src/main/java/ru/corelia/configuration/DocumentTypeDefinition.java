@@ -82,6 +82,20 @@ public final class DocumentTypeDefinition {
                 if (column.has("label")) requiredText(column, "label");
             } else if (!column.isTextual()) throw new ConfigurationException("Invalid ui column: " + id());
         }
+        for (String formName : List.of("createForm", "viewCard", "editCard")) {
+            if (!ui.has(formName)) continue;
+            JsonNode form = ui.path(formName);
+            if (!form.isObject() || !form.path("fields").isArray()) throw new ConfigurationException("Invalid ui form: " + id() + "." + formName);
+            Set<String> formFields = new HashSet<>();
+            for (JsonNode field : form.path("fields")) {
+                if (!field.isTextual() || !schema.fields().contains(field.asString()) || !formFields.add(field.asString()))
+                    throw new ConfigurationException("Invalid ui form field: " + id() + "." + formName);
+            }
+            for (String layout : List.of("sections", "tabs")) if (form.has(layout) && !form.path(layout).isArray())
+                throw new ConfigurationException("Invalid ui form layout: " + id() + "." + formName);
+        }
+        for (String layout : List.of("sections", "tabs")) if (ui.has(layout) && !ui.path(layout).isArray())
+            throw new ConfigurationException("Invalid ui layout: " + id() + "." + layout);
         if (ui.has("dateField") && (!ui.path("dateField").isTextual() || !schema.fields().contains(ui.path("dateField").asString())
                 || !"date".equals(schema.definition().path("properties").path(ui.path("dateField").asString()).path("format").asString())))
             throw new ConfigurationException("Invalid ui.dateField: " + id());

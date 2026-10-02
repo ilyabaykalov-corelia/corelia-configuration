@@ -162,8 +162,7 @@ public final class ConfigurationLoader {
         normalized.set("viewCard", viewCard.deepCopy());
         normalized.set("editCard", editCard.deepCopy());
         normalized.set("table", table.deepCopy());
-        normalized.set("sections", ui.path("sections").deepCopy());
-        normalized.set("tabs", ui.path("tabs").deepCopy());
+        for (String key : List.of("sections", "tabs")) if (ui.has(key)) normalized.set(key, ui.path(key).deepCopy());
         normalized.set("indexHints", search.path("indexHints").deepCopy());
         for (String key : List.of("dateField", "masks", "initialValues")) if (ui.has(key)) normalized.set(key, ui.path(key).deepCopy());
         return normalized;

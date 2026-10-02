@@ -160,6 +160,28 @@ class ConfigurationLoaderTest {
         assertEquals("v3_form_process", loaded.providerBindings().get("V3_FORM").path("workflow").path("flowable").path("definitionKey").asString());
         assertEquals(Set.of("operator"), loaded.permissionGrants().get("document:V3_FORM:create"));
     }
+    @Test void rejectsV3UiFieldOutsideAttributeSchema() throws Exception {
+        Files.createDirectories(root.resolve("documents"));
+        Files.createDirectories(root.resolve("workflows"));
+        Files.createDirectories(root.resolve("permissions"));
+        Files.writeString(root.resolve("configuration.json"), """
+                {"schemaVersion":3,"compatibility":{"corelia":">=0.1.0 <1.0.0"},"sources":{"documents":"documents","workflows":"workflows","permissions":"permissions"}}
+                """);
+        Files.writeString(root.resolve("documents/v3-form.json"), """
+                {"id":"V3_FORM","title":"V3 form","schemaVersion":1,
+                 "attributes":{"type":"object","additionalProperties":false,"required":[],"properties":{}},
+                 "presentation":{"statuses":{"CREATED":"Created"},"aliases":{},"tones":{},"initialStatus":"CREATED"},
+                 "ui":{"createForm":{"fields":["missing"]},"viewCard":{"fields":[]},"editCard":{"fields":[]},"table":{"columns":[]}},
+                 "search":{"filterableFields":[],"sortableFields":[],"indexHints":[]},"attachments":{"enabled":false,"initialRequired":false,"maxCount":0}}
+                """);
+        Files.writeString(root.resolve("workflows/v3-form.json"), """
+                {"id":"V3_FORM","processKey":"v3_form_process","bpmnFile":"bpmn/v3-form.bpmn","startActions":[]}
+                """);
+        Files.writeString(root.resolve("permissions/v3-form.json"), """
+                {"id":"V3_FORM","permissions":{"create":"create","edit":"edit"},"executorRole":"operator","editableStatuses":[],"initialUploadStatuses":[]}
+                """);
+        assertThrows(ConfigurationException.class, () -> new ConfigurationLoader().load(root, "0.1.0"));
+    }
     @Test void rejectsMalformedPermissionGrants() throws Exception {
         load(config());
         Files.writeString(root.resolve("configuration.json"), """
