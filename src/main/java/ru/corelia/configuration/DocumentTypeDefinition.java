@@ -53,14 +53,34 @@ public final class DocumentTypeDefinition {
         }
         JsonNode ui = definition.path("ui");
         if (!ui.isObject()) throw new ConfigurationException("Missing ui: " + id());
-        AttributeSchema.keywords(ui, Set.of("columns", "fields", "searchFields", "dateField", "sortFields", "masks", "initialValues"), "ui");
-        for (String key : List.of("columns", "fields", "searchFields", "sortFields")) {
+        AttributeSchema.keywords(ui, Set.of("columns", "fields", "searchFields", "dateField", "sortFields", "masks", "initialValues",
+                "createForm", "viewCard", "editCard", "table", "sections", "tabs", "indexHints"), "ui");
+        for (String key : List.of("fields", "searchFields", "sortFields")) {
             if (!ui.path(key).isArray()) throw new ConfigurationException("ui." + key + " must be an array");
             Set<String> seen = new HashSet<>();
             for (JsonNode field : ui.path(key)) {
                 if (!field.isTextual() || !schema.fields().contains(field.asString()) || !seen.add(field.asString()))
                     throw new ConfigurationException("Invalid ui field reference: " + id() + "." + key);
             }
+        }
+        if (ui.has("indexHints")) {
+            if (!ui.path("indexHints").isArray()) throw new ConfigurationException("ui.indexHints must be an array");
+            Set<String> hints = new HashSet<>();
+            for (JsonNode field : ui.path("indexHints")) {
+                if (!field.isTextual() || !schema.fields().contains(field.asString()) || !hints.add(field.asString()))
+                    throw new ConfigurationException("Invalid ui field reference: " + id() + ".indexHints");
+            }
+        }
+        if (!ui.path("columns").isArray()) throw new ConfigurationException("ui.columns must be an array");
+        Set<String> columns = new HashSet<>();
+        for (JsonNode column : ui.path("columns")) {
+            String field = column.isTextual() ? column.asString() : column.path("field").asString();
+            if (field.isBlank() || !schema.fields().contains(field) || !columns.add(field))
+                throw new ConfigurationException("Invalid ui field reference: " + id() + ".columns");
+            if (column.isObject()) {
+                AttributeSchema.keywords(column, Set.of("field", "label"), "ui column");
+                if (column.has("label")) requiredText(column, "label");
+            } else if (!column.isTextual()) throw new ConfigurationException("Invalid ui column: " + id());
         }
         if (ui.has("dateField") && (!ui.path("dateField").isTextual() || !schema.fields().contains(ui.path("dateField").asString())
                 || !"date".equals(schema.definition().path("properties").path(ui.path("dateField").asString()).path("format").asString())))
