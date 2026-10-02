@@ -105,6 +105,7 @@ public final class ConfigurationLoader {
     private LoadedConfiguration readV3(Path root, JsonNode manifest, String productVersion) throws IOException {
         AttributeSchema.keywords(manifest, Set.of("schemaVersion", "compatibility", "sources", "permissionGrants", "branding"), "configuration");
         validateCompatibility(manifest, productVersion);
+        validateBranding(manifest);
         JsonNode sources = manifest.path("sources");
         if (!sources.isObject()) throw new ConfigurationException("Missing sources");
         AttributeSchema.keywords(sources, Set.of("documents", "workflows", "permissions"), "sources");
@@ -138,6 +139,21 @@ public final class ConfigurationLoader {
         if (!permissions.isEmpty()) throw new ConfigurationException(permissions.values().iterator().next().display() + ": Unknown document '" + permissions.keySet().iterator().next() + "'");
         definitions.sort(Comparator.comparing(DocumentTypeDefinition::id));
         return new LoadedConfiguration(new DocumentTypeRegistry(definitions), bindings, permissionGrants(manifest), root);
+    }
+
+    private void validateBranding(JsonNode manifest) {
+        if (!manifest.has("branding")) return;
+        JsonNode branding = manifest.path("branding");
+        if (!branding.isObject()) throw new ConfigurationException("Invalid branding");
+        AttributeSchema.keywords(branding, Set.of("applicationName", "logo", "favicon", "theme"), "branding");
+        for (String key : List.of("applicationName", "logo", "favicon")) if (branding.has(key)) DocumentTypeDefinition.requiredText(branding, key);
+        if (branding.has("theme")) {
+            JsonNode theme = branding.path("theme");
+            if (!theme.isObject()) throw new ConfigurationException("Invalid branding theme");
+            for (var entry : theme.properties())
+                if (!entry.getValue().isTextual() || entry.getValue().asString().isBlank())
+                    throw new ConfigurationException("Invalid branding theme token: " + entry.getKey());
+        }
     }
 
     private ObjectNode normalizedV3Ui(String id, JsonNode ui, JsonNode search) {

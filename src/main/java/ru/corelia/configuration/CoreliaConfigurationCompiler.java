@@ -38,6 +38,7 @@ public final class CoreliaConfigurationCompiler {
             for (var entry : manifest.path("sources").properties())
                 copyTree(source, runtime, Path.of(entry.getValue().asString()));
             for (String resource : new String[]{"graphql", "bpmn", "branding"}) copyTreeIfPresent(source, runtime, Path.of(resource));
+            writeBranding(runtime, manifest.path("branding"));
             var release = JSON.createObjectNode().put("schemaVersion", 1).put("coreliaVersion", version);
             release.put("configurationSha256", sha256(Files.readString(runtime.resolve("configuration.json"))));
             Files.writeString(staging.resolve("manifest.json"), JSON.writerWithDefaultPrettyPrinter().writeValueAsString(release));
@@ -76,6 +77,20 @@ public final class CoreliaConfigurationCompiler {
         if (!output.startsWith(target)) throw new ConfigurationException("Configuration output escapes package: " + relative);
         Files.createDirectories(output.getParent());
         Files.copy(input, output, StandardCopyOption.COPY_ATTRIBUTES);
+    }
+
+    /** Преобразует V3 branding metadata в runtime contract web-клиента. */
+    private static void writeBranding(Path runtime, JsonNode source) throws IOException {
+        if (source.isMissingNode()) return;
+        var branding = JSON.createObjectNode();
+        branding.put("title", source.path("applicationName").asString());
+        var theme = branding.putObject("theme");
+        source.path("theme").properties().forEach(entry -> theme.set(entry.getKey(), entry.getValue().deepCopy()));
+        var assets = branding.putObject("assets");
+        for (String key : new String[]{"logo", "favicon"}) if (source.has(key)) assets.put(key, source.path(key).asString());
+        Path output = runtime.resolve("branding/branding.json");
+        Files.createDirectories(output.getParent());
+        Files.writeString(output, JSON.writerWithDefaultPrettyPrinter().writeValueAsString(branding));
     }
 
     private static String sha256(String value) {
