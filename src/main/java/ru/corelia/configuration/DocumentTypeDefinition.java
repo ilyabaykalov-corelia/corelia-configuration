@@ -42,8 +42,10 @@ public final class DocumentTypeDefinition {
         if (definition.has("authorization")) {
             JsonNode authorization = definition.path("authorization");
             if (!authorization.isObject()) throw new ConfigurationException("Invalid authorization");
-            AttributeSchema.keywords(authorization, Set.of("createPermission", "editPermission", "executorRole", "editableStatuses", "initialUploadStatuses"), "authorization");
+            AttributeSchema.keywords(authorization, Set.of("createPermission", "readPermission", "editPermission", "attachmentAddPermission", "executorRole", "editableStatuses", "initialUploadStatuses"), "authorization");
             for (String key : List.of("createPermission", "editPermission", "executorRole")) requiredText(authorization, key);
+            for (String key : List.of("readPermission", "attachmentAddPermission"))
+                if (authorization.has(key)) requiredText(authorization, key);
             for (String key : List.of("editableStatuses", "initialUploadStatuses")) {
                 if (!authorization.path(key).isArray()) throw new ConfigurationException("Invalid authorization " + key);
                 for (JsonNode status : authorization.path(key)) if (!status.isTextual() || !definition.path("presentation").path("statuses").has(status.asString())) throw new ConfigurationException("Unknown authorization status");
