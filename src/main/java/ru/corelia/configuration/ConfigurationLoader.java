@@ -17,12 +17,25 @@ public final class ConfigurationLoader {
     /** Нормализованный результат загрузки configuration package.
      * @param documentTypes реестр доступных типов
      * @param providerBindings storage/workflow binding, изолированные от domain definition
+     * @param permissionGrants соответствие непрозрачных прав Corelia ролям identity provider-а
      * @param packageRoot канонический корень проверенного пакета
      */
-    public record LoadedConfiguration(DocumentTypeRegistry documentTypes, Map<String, JsonNode> providerBindings, Path packageRoot) {
+    public record LoadedConfiguration(
+            DocumentTypeRegistry documentTypes,
+            Map<String, JsonNode> providerBindings,
+            Map<String, Set<String>> permissionGrants,
+            Path packageRoot) {
         public LoadedConfiguration {
             providerBindings = Collections.unmodifiableMap(new LinkedHashMap<>(providerBindings));
+            var grants = new LinkedHashMap<String, Set<String>>();
+            for (var entry : permissionGrants.entrySet()) grants.put(entry.getKey(), Set.copyOf(entry.getValue()));
+            permissionGrants = Collections.unmodifiableMap(grants);
             packageRoot = packageRoot.toAbsolutePath().normalize();
+        }
+
+        /** Совместимость с существующими потребителями конфигурации без native permissions. */
+        public LoadedConfiguration(DocumentTypeRegistry documentTypes, Map<String, JsonNode> providerBindings, Path packageRoot) {
+            this(documentTypes, providerBindings, Map.of(), packageRoot);
         }
     }
 
@@ -42,7 +55,7 @@ public final class ConfigurationLoader {
     }
 
     private LoadedConfiguration readV2(Path root, JsonNode manifest, String productVersion) throws IOException {
-        AttributeSchema.keywords(manifest, Set.of("schemaVersion", "compatibility", "sources"), "configuration");
+        AttributeSchema.keywords(manifest, Set.of("schemaVersion", "compatibility", "sources", "permissionGrants"), "configuration");
         validateCompatibility(manifest, productVersion);
         JsonNode sources = manifest.path("sources");
         if (!sources.isObject()) throw new ConfigurationException("Missing sources");
@@ -78,7 +91,26 @@ public final class ConfigurationLoader {
         if (!permissions.isEmpty()) throw new ConfigurationException(permissions.values().iterator().next().display() + ": Unknown entity '" + permissions.keySet().iterator().next() + "'");
         definitions.sort(Comparator.comparing(DocumentTypeDefinition::id));
         var registry = new DocumentTypeRegistry(definitions);
-        return new LoadedConfiguration(registry, bindings, root);
+        return new LoadedConfiguration(registry, bindings, permissionGrants(manifest), root);
+    }
+
+    private Map<String, Set<String>> permissionGrants(JsonNode manifest) {
+        if (!manifest.has("permissionGrants")) return Map.of();
+        JsonNode source = manifest.path("permissionGrants");
+        if (!source.isObject() || source.isEmpty()) throw new ConfigurationException("permissionGrants must be a non-empty object");
+        var grants = new LinkedHashMap<String, Set<String>>();
+        for (var entry : source.properties()) {
+            String permission = entry.getKey(); JsonNode roles = entry.getValue();
+            if (permission.isBlank() || !roles.isArray() || roles.isEmpty())
+                throw new ConfigurationException("Invalid permission grant: " + permission);
+            var allowed = new LinkedHashSet<String>();
+            for (JsonNode role : roles) {
+                if (!role.isTextual() || role.asString().isBlank() || !allowed.add(role.asString()))
+                    throw new ConfigurationException("Invalid role grant: " + permission);
+            }
+            grants.put(permission, Set.copyOf(allowed));
+        }
+        return grants;
     }
 
     private Map<String, Fragment> fragmentsById(Path root, List<Path> files, String label, Set<String> keys) throws IOException {

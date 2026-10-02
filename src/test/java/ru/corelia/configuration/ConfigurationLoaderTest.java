@@ -5,6 +5,7 @@ import org.junit.jupiter.api.io.TempDir;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ObjectNode;
 import java.nio.file.*;
+import java.util.Set;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ConfigurationLoaderTest {
@@ -113,6 +114,26 @@ class ConfigurationLoaderTest {
         load(config());
         Files.writeString(root.resolve("configuration.json"), "{\"schemaVersion\":2,\"schemaVersion\":2}");
         assertThrows(RuntimeException.class, () -> new ConfigurationLoader().load(root, "0.1.0"));
+    }
+    @Test void loadsConfiguredPermissionGrantsDefensively() throws Exception {
+        load(config());
+        Files.writeString(root.resolve("configuration.json"), """
+                {"schemaVersion":2,"compatibility":{"corelia":">=0.1.0 <1.0.0"},
+                 "permissionGrants":{"document:TEST_FORM:create":["operator","auditor"]},
+                 "sources":{"entities":"data-model/entities","ui":"ui","operations":"operations","permissions":"permissions"}}
+                """);
+        var loaded = new ConfigurationLoader().load(root, "0.1.0");
+        assertEquals(Set.of("operator", "auditor"), loaded.permissionGrants().get("document:TEST_FORM:create"));
+        assertThrows(UnsupportedOperationException.class, () -> loaded.permissionGrants().clear());
+    }
+    @Test void rejectsMalformedPermissionGrants() throws Exception {
+        load(config());
+        Files.writeString(root.resolve("configuration.json"), """
+                {"schemaVersion":2,"compatibility":{"corelia":">=0.1.0 <1.0.0"},
+                 "permissionGrants":{"document:TEST_FORM:create":["operator","operator"]},
+                 "sources":{"entities":"data-model/entities","ui":"ui","operations":"operations","permissions":"permissions"}}
+                """);
+        assertThrows(ConfigurationException.class, () -> new ConfigurationLoader().load(root, "0.1.0"));
     }
     @Test void rejectsPathTraversalAndSymlinksOutsidePackage() throws Exception {
         var config = config();
