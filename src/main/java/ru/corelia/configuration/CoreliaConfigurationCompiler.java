@@ -11,7 +11,7 @@ import java.util.Comparator;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
-/** Собирает проверенный customer configuration package без provider-specific артефактов. */
+/** Собирает проверенный provider-neutral customer configuration package. */
 public final class CoreliaConfigurationCompiler {
     private static final JsonMapper JSON = JsonMapper.builder().enable(tools.jackson.core.StreamReadFeature.STRICT_DUPLICATE_DETECTION).build();
 
@@ -28,7 +28,6 @@ public final class CoreliaConfigurationCompiler {
         output = parent.resolve(output.getFileName());
         if (Files.exists(output)) throw new ConfigurationException("Output must not exist; compile into a new release directory");
         if (output.startsWith(source)) throw new ConfigurationException("Output must be outside the source package");
-        rejectPlatformAuthorization(source);
         new ConfigurationLoader().load(source, version);
         JsonNode manifest = JSON.readTree(Files.readString(source.resolve("configuration.json")));
         Path staging = Files.createTempDirectory(parent, ".corelia-config-");
@@ -37,7 +36,7 @@ public final class CoreliaConfigurationCompiler {
             copyFile(source, runtime, Path.of("configuration.json"));
             for (var entry : manifest.path("sources").properties())
                 copyTree(source, runtime, Path.of(entry.getValue().asString()));
-            for (String resource : new String[]{"graphql", "bpmn", "branding"}) copyTreeIfPresent(source, runtime, Path.of(resource));
+            for (String resource : new String[]{"bpmn", "branding"}) copyTreeIfPresent(source, runtime, Path.of(resource));
             writeBranding(runtime, manifest.path("branding"));
             var release = JSON.createObjectNode().put("schemaVersion", 1).put("coreliaVersion", version);
             release.put("configurationSha256", sha256(Files.readString(runtime.resolve("configuration.json"))));
@@ -49,12 +48,6 @@ public final class CoreliaConfigurationCompiler {
                 for (Path path : paths.sorted(Comparator.reverseOrder()).toList()) Files.delete(path);
             }
         }
-    }
-
-    private static void rejectPlatformAuthorization(Path source) {
-        for (String artifact : new String[]{"platform-v-ac.json", "operation-permissions.json"})
-            if (Files.exists(source.resolve(artifact)))
-                throw new ConfigurationException("Устаревший authorization artifact не поддерживается: " + artifact);
     }
 
     private static void copyTreeIfPresent(Path source, Path target, Path relative) throws IOException {

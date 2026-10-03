@@ -18,14 +18,7 @@ class CoreliaConfigurationCompilerTest {
         assertTrue(Files.isRegularFile(output.resolve("corelia/documents/test-form.json")));
         assertTrue(Files.isRegularFile(output.resolve("corelia/workflows/test-form.json")));
         assertEquals("V3 test application", JSON.readTree(Files.readString(output.resolve("corelia/branding/branding.json"))).path("title").asString());
-        assertFalse(Files.exists(output.resolve("corelia/platform-v-ac.json")));
-        assertFalse(Files.exists(output.resolve("platform-v")));
-    }
-
-    @Test void rejectsPlatformAuthorizationArtifacts() throws Exception {
-        Path source = packageSource();
-        Files.writeString(source.resolve("platform-v-ac.json"), "{}");
-        assertThrows(ConfigurationException.class, () -> CoreliaConfigurationCompiler.compile(source, root.resolve("release"), "0.1.0"));
+        assertFalse(Files.exists(output.resolve("corelia/graphql")));
     }
 
     private Path packageSource() throws Exception {
