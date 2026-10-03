@@ -54,7 +54,7 @@ public final class CoreliaConfigurationCompiler {
     private static void rejectPlatformAuthorization(Path source) {
         for (String artifact : new String[]{"platform-v-ac.json", "operation-permissions.json"})
             if (Files.exists(source.resolve(artifact)))
-                throw new ConfigurationException("Platform V authorization artifact is not supported: " + artifact);
+                throw new ConfigurationException("Устаревший authorization artifact не поддерживается: " + artifact);
     }
 
     private static void copyTreeIfPresent(Path source, Path target, Path relative) throws IOException {
