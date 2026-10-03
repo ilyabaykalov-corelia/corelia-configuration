@@ -289,7 +289,7 @@ public final class ConfigurationLoader {
     }
     private static String display(Path root, Path file) { return root.relativize(file).toString().replace('\\', '/'); }
     private record Fragment(String display, JsonNode node) {}
-    /** Initial explicit range grammar: >=MAJOR.MINOR.PATCH <MAJOR.MINOR.PATCH. */
+    /** Начальная явная грамматика диапазона: {@code >=MAJOR.MINOR.PATCH <MAJOR.MINOR.PATCH}. */
     private static void checkVersion(String range, String version) {
         var match = Pattern.compile(">=([0-9]+\\.[0-9]+\\.[0-9]+) <([0-9]+\\.[0-9]+\\.[0-9]+)").matcher(range);
         if (!match.matches() || !version.matches("[0-9]+\\.[0-9]+\\.[0-9]+")) throw new ConfigurationException("Unsupported Corelia version range");
