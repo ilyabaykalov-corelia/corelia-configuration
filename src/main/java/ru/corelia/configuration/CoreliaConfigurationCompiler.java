@@ -8,6 +8,7 @@ import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Comparator;
+import java.util.Set;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
@@ -29,6 +30,7 @@ public final class CoreliaConfigurationCompiler {
         if (Files.exists(output)) throw new ConfigurationException("Output must not exist; compile into a new release directory");
         if (output.startsWith(source)) throw new ConfigurationException("Output must be outside the source package");
         new ConfigurationLoader().load(source, version);
+        validateBranding(source);
         JsonNode manifest = JSON.readTree(Files.readString(source.resolve("configuration.json")));
         Path staging = Files.createTempDirectory(parent, ".corelia-config-");
         try {
@@ -37,7 +39,6 @@ public final class CoreliaConfigurationCompiler {
             for (var entry : manifest.path("sources").properties())
                 copyTree(source, runtime, Path.of(entry.getValue().asString()));
             for (String resource : new String[]{"bpmn", "branding"}) copyTreeIfPresent(source, runtime, Path.of(resource));
-            writeBranding(runtime, manifest.path("branding"));
             var release = JSON.createObjectNode().put("schemaVersion", 1).put("coreliaVersion", version);
             release.put("configurationSha256", sha256(Files.readString(runtime.resolve("configuration.json"))));
             Files.writeString(staging.resolve("manifest.json"), JSON.writerWithDefaultPrettyPrinter().writeValueAsString(release));
@@ -72,18 +73,27 @@ public final class CoreliaConfigurationCompiler {
         Files.copy(input, output, StandardCopyOption.COPY_ATTRIBUTES);
     }
 
-    /** Преобразует V3 branding metadata в runtime contract web-клиента. */
-    private static void writeBranding(Path runtime, JsonNode source) throws IOException {
-        if (source.isMissingNode()) return;
-        var branding = JSON.createObjectNode();
-        branding.put("title", source.path("applicationName").asString());
-        var theme = branding.putObject("theme");
-        source.path("theme").properties().forEach(entry -> theme.set(entry.getKey(), entry.getValue().deepCopy()));
-        var assets = branding.putObject("assets");
-        for (String key : new String[]{"logo", "favicon"}) if (source.has(key)) assets.put(key, source.path(key).asString());
-        Path output = runtime.resolve("branding/branding.json");
-        Files.createDirectories(output.getParent());
-        Files.writeString(output, JSON.writerWithDefaultPrettyPrinter().writeValueAsString(branding));
+    /** Проверяет самостоятельный runtime-контракт branding из customer package. */
+    private static void validateBranding(Path source) throws IOException {
+        Path file = source.resolve("branding/branding.json");
+        if (!Files.exists(file)) return;
+        JsonNode branding = JSON.readTree(Files.readString(file));
+        if (!branding.isObject()) throw new ConfigurationException("Invalid branding");
+        AttributeSchema.keywords(branding, Set.of("title", "theme", "assets"), "branding");
+        DocumentTypeDefinition.requiredText(branding, "title");
+        if (branding.has("theme")) {
+            JsonNode theme = branding.path("theme");
+            if (!theme.isObject()) throw new ConfigurationException("Invalid branding theme");
+            for (var entry : theme.properties())
+                if (!entry.getValue().isTextual() || entry.getValue().asString().isBlank())
+                    throw new ConfigurationException("Invalid branding theme token: " + entry.getKey());
+        }
+        if (branding.has("assets")) {
+            JsonNode assets = branding.path("assets");
+            if (!assets.isObject()) throw new ConfigurationException("Invalid branding assets");
+            AttributeSchema.keywords(assets, Set.of("logo", "favicon"), "branding assets");
+            for (String key : new String[]{"logo", "favicon"}) if (assets.has(key)) DocumentTypeDefinition.requiredText(assets, key);
+        }
     }
 
     private static String sha256(String value) {

@@ -133,7 +133,6 @@ class ConfigurationLoaderTest {
         Files.writeString(root.resolve("configuration.json"), """
                 {"schemaVersion":3,"compatibility":{"corelia":">=0.1.0 <1.0.0"},
                  "permissionGrants":{"document:V3_FORM:create":["operator"]},
-                 "branding":{"applicationName":"Customer application"},
                  "sources":{"documents":"documents","workflows":"workflows","permissions":"permissions"}}
                 """);
         Files.writeString(root.resolve("documents/v3-form.json"), """

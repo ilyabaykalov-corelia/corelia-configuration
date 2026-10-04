@@ -18,17 +18,22 @@ class CoreliaConfigurationCompilerTest {
         assertTrue(Files.isRegularFile(output.resolve("corelia/documents/test-form.json")));
         assertTrue(Files.isRegularFile(output.resolve("corelia/workflows/test-form.json")));
         assertEquals("V3 test application", JSON.readTree(Files.readString(output.resolve("corelia/branding/branding.json"))).path("title").asString());
+        assertTrue(Files.isRegularFile(output.resolve("corelia/branding/assets/logo.svg")));
         assertFalse(Files.exists(output.resolve("corelia/graphql")));
     }
 
     private Path packageSource() throws Exception {
         Path source = Files.createDirectories(root.resolve("source"));
-        for (String directory : new String[]{"documents", "workflows", "permissions", "bpmn"}) Files.createDirectories(source.resolve(directory));
+        for (String directory : new String[]{"documents", "workflows", "permissions", "bpmn", "branding/assets"}) Files.createDirectories(source.resolve(directory));
         Files.writeString(source.resolve("configuration.json"), """
                 {"schemaVersion":3,"compatibility":{"corelia":">=0.1.0 <1.0.0"},
-                 "branding":{"applicationName":"V3 test application","logo":"/branding/logo.svg","favicon":"/branding/favicon.ico","theme":{"primaryColor":"#3477d4"}},
                  "sources":{"documents":"documents","workflows":"workflows","permissions":"permissions"}}
                 """);
+        Files.writeString(source.resolve("branding/branding.json"), """
+                {"title":"V3 test application","theme":{"primaryColor":"#3477d4"},
+                 "assets":{"logo":"/logo.svg","favicon":"/favicon.ico"}}
+                """);
+        Files.writeString(source.resolve("branding/assets/logo.svg"), "<svg />");
         Files.writeString(source.resolve("documents/test-form.json"), """
                 {"id":"TEST_FORM","title":"Test","schemaVersion":1,
                  "attributes":{"type":"object","additionalProperties":false,"required":[],"properties":{}},
