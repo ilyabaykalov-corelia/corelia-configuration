@@ -5,6 +5,7 @@ import org.junit.jupiter.api.io.TempDir;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ObjectNode;
 import java.nio.file.*;
+import java.util.Set;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ConfigurationLoaderTest {
@@ -113,6 +114,81 @@ class ConfigurationLoaderTest {
         load(config());
         Files.writeString(root.resolve("configuration.json"), "{\"schemaVersion\":2,\"schemaVersion\":2}");
         assertThrows(RuntimeException.class, () -> new ConfigurationLoader().load(root, "0.1.0"));
+    }
+    @Test void loadsConfiguredPermissionGrantsDefensively() throws Exception {
+        load(config());
+        Files.writeString(root.resolve("configuration.json"), """
+                {"schemaVersion":2,"compatibility":{"corelia":">=0.1.0 <1.0.0"},
+                 "permissionGrants":{"document:TEST_FORM:create":["operator","auditor"]},
+                 "sources":{"entities":"data-model/entities","ui":"ui","operations":"operations","permissions":"permissions"}}
+                """);
+        var loaded = new ConfigurationLoader().load(root, "0.1.0");
+        assertEquals(Set.of("operator", "auditor"), loaded.permissionGrants().get("document:TEST_FORM:create"));
+        assertThrows(UnsupportedOperationException.class, () -> loaded.permissionGrants().clear());
+    }
+    @Test void loadsV3PackageWithExplicitDocumentWorkflowPermissionAndUiMetadata() throws Exception {
+        Files.createDirectories(root.resolve("documents"));
+        Files.createDirectories(root.resolve("workflows"));
+        Files.createDirectories(root.resolve("permissions"));
+        Files.writeString(root.resolve("configuration.json"), """
+                {"schemaVersion":3,"compatibility":{"corelia":">=0.1.0 <1.0.0"},
+                 "permissionGrants":{"document:V3_FORM:create":["operator"]},
+                 "sources":{"documents":"documents","workflows":"workflows","permissions":"permissions"}}
+                """);
+        Files.writeString(root.resolve("documents/v3-form.json"), """
+                {"id":"V3_FORM","title":"V3 form","schemaVersion":1,
+                 "attributes":{"type":"object","additionalProperties":false,"required":["number"],"properties":{"number":{"type":"string","minLength":1}}},
+                 "presentation":{"statuses":{"CREATED":"Created"},"aliases":{},"tones":{},"initialStatus":"CREATED"},
+                 "ui":{"createForm":{"fields":["number"]},"viewCard":{"fields":["number"]},"editCard":{"fields":["number"]},"table":{"columns":[{"field":"number","label":"Number"}]},"sections":[],"tabs":[],"masks":{"number":"000"}},
+                 "search":{"filterableFields":["number"],"sortableFields":["number"],"indexHints":["number"]},
+                 "attachments":{"enabled":true,"initialRequired":false,"maxCount":2,"allowedMimeTypes":["application/pdf"]}}
+                """);
+        Files.writeString(root.resolve("workflows/v3-form.json"), """
+                {"id":"V3_FORM","processKey":"v3_form_process","bpmnFile":"bpmn/v3-form.bpmn","startActions":["create"]}
+                """);
+        Files.writeString(root.resolve("permissions/v3-form.json"), """
+                {"id":"V3_FORM","permissions":{"create":"document:V3_FORM:create","read":"document:V3_FORM:read","edit":"document:V3_FORM:edit"},
+                 "executorRole":"operator","editableStatuses":["CREATED"],"initialUploadStatuses":["CREATED"]}
+                """);
+        var loaded = new ConfigurationLoader().load(root, "0.1.0");
+        var type = loaded.documentTypes().require("V3_FORM");
+        assertEquals("number", type.ui().path("table").path("columns").get(0).path("field").asString());
+        assertEquals("number", type.ui().path("indexHints").get(0).asString());
+        assertEquals("000", type.ui().path("masks").path("number").asString());
+        assertEquals("application/pdf", type.attachments().path("allowedMimeTypes").get(0).asString());
+        assertEquals("v3_form_process", loaded.providerBindings().get("V3_FORM").path("workflow").path("flowable").path("definitionKey").asString());
+        assertEquals(Set.of("operator"), loaded.permissionGrants().get("document:V3_FORM:create"));
+    }
+    @Test void rejectsV3UiFieldOutsideAttributeSchema() throws Exception {
+        Files.createDirectories(root.resolve("documents"));
+        Files.createDirectories(root.resolve("workflows"));
+        Files.createDirectories(root.resolve("permissions"));
+        Files.writeString(root.resolve("configuration.json"), """
+                {"schemaVersion":3,"compatibility":{"corelia":">=0.1.0 <1.0.0"},"sources":{"documents":"documents","workflows":"workflows","permissions":"permissions"}}
+                """);
+        Files.writeString(root.resolve("documents/v3-form.json"), """
+                {"id":"V3_FORM","title":"V3 form","schemaVersion":1,
+                 "attributes":{"type":"object","additionalProperties":false,"required":[],"properties":{}},
+                 "presentation":{"statuses":{"CREATED":"Created"},"aliases":{},"tones":{},"initialStatus":"CREATED"},
+                 "ui":{"createForm":{"fields":["missing"]},"viewCard":{"fields":[]},"editCard":{"fields":[]},"table":{"columns":[]}},
+                 "search":{"filterableFields":[],"sortableFields":[],"indexHints":[]},"attachments":{"enabled":false,"initialRequired":false,"maxCount":0}}
+                """);
+        Files.writeString(root.resolve("workflows/v3-form.json"), """
+                {"id":"V3_FORM","processKey":"v3_form_process","bpmnFile":"bpmn/v3-form.bpmn","startActions":[]}
+                """);
+        Files.writeString(root.resolve("permissions/v3-form.json"), """
+                {"id":"V3_FORM","permissions":{"create":"create","edit":"edit"},"executorRole":"operator","editableStatuses":[],"initialUploadStatuses":[]}
+                """);
+        assertThrows(ConfigurationException.class, () -> new ConfigurationLoader().load(root, "0.1.0"));
+    }
+    @Test void rejectsMalformedPermissionGrants() throws Exception {
+        load(config());
+        Files.writeString(root.resolve("configuration.json"), """
+                {"schemaVersion":2,"compatibility":{"corelia":">=0.1.0 <1.0.0"},
+                 "permissionGrants":{"document:TEST_FORM:create":["operator","operator"]},
+                 "sources":{"entities":"data-model/entities","ui":"ui","operations":"operations","permissions":"permissions"}}
+                """);
+        assertThrows(ConfigurationException.class, () -> new ConfigurationLoader().load(root, "0.1.0"));
     }
     @Test void rejectsPathTraversalAndSymlinksOutsidePackage() throws Exception {
         var config = config();

@@ -17,16 +17,29 @@ public final class ConfigurationLoader {
     /** Нормализованный результат загрузки configuration package.
      * @param documentTypes реестр доступных типов
      * @param providerBindings storage/workflow binding, изолированные от domain definition
+     * @param permissionGrants соответствие непрозрачных прав Corelia ролям identity provider-а
      * @param packageRoot канонический корень проверенного пакета
      */
-    public record LoadedConfiguration(DocumentTypeRegistry documentTypes, Map<String, JsonNode> providerBindings, Path packageRoot) {
+    public record LoadedConfiguration(
+            DocumentTypeRegistry documentTypes,
+            Map<String, JsonNode> providerBindings,
+            Map<String, Set<String>> permissionGrants,
+            Path packageRoot) {
         public LoadedConfiguration {
             providerBindings = Collections.unmodifiableMap(new LinkedHashMap<>(providerBindings));
+            var grants = new LinkedHashMap<String, Set<String>>();
+            for (var entry : permissionGrants.entrySet()) grants.put(entry.getKey(), Set.copyOf(entry.getValue()));
+            permissionGrants = Collections.unmodifiableMap(grants);
             packageRoot = packageRoot.toAbsolutePath().normalize();
+        }
+
+        /** Совместимость с существующими потребителями конфигурации без native permissions. */
+        public LoadedConfiguration(DocumentTypeRegistry documentTypes, Map<String, JsonNode> providerBindings, Path packageRoot) {
+            this(documentTypes, providerBindings, Map.of(), packageRoot);
         }
     }
 
-    /** Загружает package версии 2, проверяя пути, fragments и совместимость версии Corelia. */
+    /** Загружает package версии 2 или 3, проверяя пути, fragments и совместимость версии Corelia. */
     public LoadedConfiguration load(Path directory, String productVersion) {
         try {
             Path root = directory.toRealPath();
@@ -34,15 +47,18 @@ public final class ConfigurationLoader {
             if (manifest == null || !manifest.isObject()) throw new ConfigurationException("Configuration must be an object");
             if (!manifest.path("schemaVersion").isIntegralNumber() || !manifest.path("schemaVersion").canConvertToInt())
                 throw new ConfigurationException("Unsupported configuration schemaVersion");
-            if (manifest.path("schemaVersion").asInt() != 2) throw new ConfigurationException("Unsupported configuration schemaVersion");
-            return readV2(root, manifest, productVersion);
+            return switch (manifest.path("schemaVersion").asInt()) {
+                case 2 -> readV2(root, manifest, productVersion);
+                case 3 -> readV3(root, manifest, productVersion);
+                default -> throw new ConfigurationException("Unsupported configuration schemaVersion");
+            };
         } catch (IOException e) {
             throw new ConfigurationException("Cannot read configuration package: " + directory, e);
         }
     }
 
     private LoadedConfiguration readV2(Path root, JsonNode manifest, String productVersion) throws IOException {
-        AttributeSchema.keywords(manifest, Set.of("schemaVersion", "compatibility", "sources"), "configuration");
+        AttributeSchema.keywords(manifest, Set.of("schemaVersion", "compatibility", "sources", "permissionGrants"), "configuration");
         validateCompatibility(manifest, productVersion);
         JsonNode sources = manifest.path("sources");
         if (!sources.isObject()) throw new ConfigurationException("Missing sources");
@@ -70,7 +86,7 @@ public final class ConfigurationLoader {
             binding.set("workflow", workflow.deepCopy());
             bindings.put(id, binding);
             var coreWorkflow = JSON.createObjectNode();
-            for (String field : List.of("completion", "terminalStatuses")) if (workflow.has(field)) coreWorkflow.set(field, workflow.path(field).deepCopy());
+            for (String field : List.of("completion", "terminalStatuses", "commands")) if (workflow.has(field)) coreWorkflow.set(field, workflow.path(field).deepCopy());
             entity.set("workflow", coreWorkflow);
             definitions.add(new DocumentTypeDefinition(entity));
         }
@@ -78,7 +94,131 @@ public final class ConfigurationLoader {
         if (!permissions.isEmpty()) throw new ConfigurationException(permissions.values().iterator().next().display() + ": Unknown entity '" + permissions.keySet().iterator().next() + "'");
         definitions.sort(Comparator.comparing(DocumentTypeDefinition::id));
         var registry = new DocumentTypeRegistry(definitions);
-        return new LoadedConfiguration(registry, bindings, root);
+        return new LoadedConfiguration(registry, bindings, permissionGrants(manifest), root);
+    }
+
+    /**
+     * Загружает V3 package. В отличие от V2, один документный fragment содержит data model,
+     * search и UI metadata, а workflow и permission policy вынесены в самостоятельные fragments.
+     * На выходе остаётся существующая нейтральная модель, поэтому сервисы не зависят от версии package.
+     */
+    private LoadedConfiguration readV3(Path root, JsonNode manifest, String productVersion) throws IOException {
+        AttributeSchema.keywords(manifest, Set.of("schemaVersion", "compatibility", "sources", "permissionGrants"), "configuration");
+        validateCompatibility(manifest, productVersion);
+        JsonNode sources = manifest.path("sources");
+        if (!sources.isObject()) throw new ConfigurationException("Missing sources");
+        AttributeSchema.keywords(sources, Set.of("documents", "workflows", "permissions"), "sources");
+        Map<String, Path> roots = new LinkedHashMap<>();
+        for (String type : List.of("documents", "workflows", "permissions"))
+            roots.put(type, sourceDirectory(root, DocumentTypeDefinition.requiredText(sources, type), type));
+
+        var documents = fragmentsById(root, scan(roots.get("documents"), "documents"), "document", Set.of(
+                "id", "title", "schemaVersion", "attributes", "presentation", "normalization", "ui", "search", "attachments"));
+        var workflows = fragmentsById(root, scan(roots.get("workflows"), "workflows"), "workflow", Set.of(
+                "id", "processKey", "bpmnFile", "startActions", "tasks", "completion", "terminalStatuses", "commands"));
+        var permissions = fragmentsById(root, scan(roots.get("permissions"), "permissions"), "permissions", Set.of(
+                "id", "permissions", "executorRole", "editableStatuses", "initialUploadStatuses"));
+        var definitions = new ArrayList<DocumentTypeDefinition>();
+        var bindings = new LinkedHashMap<String, JsonNode>();
+        for (var entry : documents.entrySet()) {
+            String id = entry.getKey();
+            Fragment workflow = workflows.remove(id), permission = permissions.remove(id);
+            if (workflow == null) throw new ConfigurationException(entry.getValue().display() + ": Missing workflow fragment for '" + id + "'");
+            if (permission == null) throw new ConfigurationException(entry.getValue().display() + ": Missing permissions fragment for '" + id + "'");
+            ObjectNode definition = (ObjectNode) entry.getValue().node().deepCopy();
+            definition.set("schema", definition.remove("attributes"));
+            definition.set("ui", normalizedV3Ui(id, definition.path("ui"), definition.path("search")));
+            definition.remove("search");
+            definition.set("authorization", normalizedV3Authorization(permission.node()));
+            definition.set("workflow", coreWorkflow(workflow.node()));
+            definitions.add(new DocumentTypeDefinition(definition));
+            bindings.put(id, v3Binding(workflow.node()));
+        }
+        if (!workflows.isEmpty()) throw new ConfigurationException(workflows.values().iterator().next().display() + ": Unknown document '" + workflows.keySet().iterator().next() + "'");
+        if (!permissions.isEmpty()) throw new ConfigurationException(permissions.values().iterator().next().display() + ": Unknown document '" + permissions.keySet().iterator().next() + "'");
+        definitions.sort(Comparator.comparing(DocumentTypeDefinition::id));
+        return new LoadedConfiguration(new DocumentTypeRegistry(definitions), bindings, permissionGrants(manifest), root);
+    }
+
+    private ObjectNode normalizedV3Ui(String id, JsonNode ui, JsonNode search) {
+        if (!ui.isObject()) throw new ConfigurationException("Missing ui: " + id);
+        AttributeSchema.keywords(ui, Set.of("createForm", "viewCard", "editCard", "table", "sections", "tabs", "dateField", "masks", "initialValues"), "ui");
+        JsonNode createForm = ui.path("createForm"), viewCard = ui.path("viewCard"), editCard = ui.path("editCard"), table = ui.path("table");
+        for (JsonNode form : List.of(createForm, viewCard, editCard)) {
+            if (!form.isObject() || !form.path("fields").isArray()) throw new ConfigurationException("V3 form must declare fields: " + id);
+            AttributeSchema.keywords(form, Set.of("fields", "label", "sections", "tabs"), "ui form");
+        }
+        if (!table.isObject() || !table.path("columns").isArray()) throw new ConfigurationException("V3 table must declare columns: " + id);
+        AttributeSchema.keywords(table, Set.of("columns", "label"), "ui table");
+        if (!search.isObject()) throw new ConfigurationException("Missing search: " + id);
+        AttributeSchema.keywords(search, Set.of("filterableFields", "sortableFields", "indexHints"), "search");
+        for (String key : List.of("filterableFields", "sortableFields", "indexHints")) if (!search.path(key).isArray()) throw new ConfigurationException("Invalid search." + key + ": " + id);
+        var normalized = JSON.createObjectNode();
+        normalized.set("fields", editCard.path("fields").deepCopy());
+        normalized.set("columns", table.path("columns").deepCopy());
+        normalized.set("searchFields", search.path("filterableFields").deepCopy());
+        normalized.set("sortFields", search.path("sortableFields").deepCopy());
+        normalized.set("createForm", createForm.deepCopy());
+        normalized.set("viewCard", viewCard.deepCopy());
+        normalized.set("editCard", editCard.deepCopy());
+        normalized.set("table", table.deepCopy());
+        for (String key : List.of("sections", "tabs")) if (ui.has(key)) normalized.set(key, ui.path(key).deepCopy());
+        normalized.set("indexHints", search.path("indexHints").deepCopy());
+        for (String key : List.of("dateField", "masks", "initialValues")) if (ui.has(key)) normalized.set(key, ui.path(key).deepCopy());
+        return normalized;
+    }
+
+    private ObjectNode normalizedV3Authorization(JsonNode fragment) {
+        JsonNode permissions = fragment.path("permissions");
+        if (!permissions.isObject()) throw new ConfigurationException("Missing permissions");
+        AttributeSchema.keywords(permissions, Set.of("create", "read", "edit", "attachmentAdd"), "permissions");
+        var authorization = JSON.createObjectNode();
+        for (String key : List.of("create", "edit")) authorization.put(key + "Permission", DocumentTypeDefinition.requiredText(permissions, key));
+        if (permissions.has("read")) authorization.put("readPermission", DocumentTypeDefinition.requiredText(permissions, "read"));
+        if (permissions.has("attachmentAdd")) authorization.put("attachmentAddPermission", DocumentTypeDefinition.requiredText(permissions, "attachmentAdd"));
+        authorization.put("executorRole", DocumentTypeDefinition.requiredText(fragment, "executorRole"));
+        for (String key : List.of("editableStatuses", "initialUploadStatuses")) authorization.set(key, fragment.path(key).deepCopy());
+        return authorization;
+    }
+
+    private ObjectNode coreWorkflow(JsonNode fragment) {
+        DocumentTypeDefinition.requiredText(fragment, "processKey");
+        DocumentTypeDefinition.requiredText(fragment, "bpmnFile");
+        if (!fragment.path("startActions").isArray()) throw new ConfigurationException("Invalid workflow startActions");
+        var workflow = JSON.createObjectNode();
+        for (String field : List.of("completion", "terminalStatuses", "commands")) if (fragment.has(field)) workflow.set(field, fragment.path(field).deepCopy());
+        return workflow;
+    }
+
+    private ObjectNode v3Binding(JsonNode fragment) {
+        var binding = JSON.createObjectNode();
+        binding.set("storage", JSON.getNodeFactory().nullNode());
+        var workflow = binding.putObject("workflow");
+        var flowable = workflow.putObject("flowable");
+        flowable.put("definitionKey", fragment.path("processKey").asString());
+        flowable.put("bpmn", fragment.path("bpmnFile").asString());
+        flowable.set("startActions", fragment.path("startActions").deepCopy());
+        if (fragment.has("tasks")) flowable.set("tasks", fragment.path("tasks").deepCopy());
+        return binding;
+    }
+
+    private Map<String, Set<String>> permissionGrants(JsonNode manifest) {
+        if (!manifest.has("permissionGrants")) return Map.of();
+        JsonNode source = manifest.path("permissionGrants");
+        if (!source.isObject() || source.isEmpty()) throw new ConfigurationException("permissionGrants must be a non-empty object");
+        var grants = new LinkedHashMap<String, Set<String>>();
+        for (var entry : source.properties()) {
+            String permission = entry.getKey(); JsonNode roles = entry.getValue();
+            if (permission.isBlank() || !roles.isArray() || roles.isEmpty())
+                throw new ConfigurationException("Invalid permission grant: " + permission);
+            var allowed = new LinkedHashSet<String>();
+            for (JsonNode role : roles) {
+                if (!role.isTextual() || role.asString().isBlank() || !allowed.add(role.asString()))
+                    throw new ConfigurationException("Invalid role grant: " + permission);
+            }
+            grants.put(permission, Set.copyOf(allowed));
+        }
+        return grants;
     }
 
     private Map<String, Fragment> fragmentsById(Path root, List<Path> files, String label, Set<String> keys) throws IOException {
@@ -133,7 +273,7 @@ public final class ConfigurationLoader {
     }
     private static String display(Path root, Path file) { return root.relativize(file).toString().replace('\\', '/'); }
     private record Fragment(String display, JsonNode node) {}
-    /** Initial explicit range grammar: >=MAJOR.MINOR.PATCH <MAJOR.MINOR.PATCH. */
+    /** Начальная явная грамматика диапазона: {@code >=MAJOR.MINOR.PATCH <MAJOR.MINOR.PATCH}. */
     private static void checkVersion(String range, String version) {
         var match = Pattern.compile(">=([0-9]+\\.[0-9]+\\.[0-9]+) <([0-9]+\\.[0-9]+\\.[0-9]+)").matcher(range);
         if (!match.matches() || !version.matches("[0-9]+\\.[0-9]+\\.[0-9]+")) throw new ConfigurationException("Unsupported Corelia version range");

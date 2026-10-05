@@ -42,8 +42,10 @@ public final class DocumentTypeDefinition {
         if (definition.has("authorization")) {
             JsonNode authorization = definition.path("authorization");
             if (!authorization.isObject()) throw new ConfigurationException("Invalid authorization");
-            AttributeSchema.keywords(authorization, Set.of("createPermission", "editPermission", "executorRole", "editableStatuses", "initialUploadStatuses"), "authorization");
+            AttributeSchema.keywords(authorization, Set.of("createPermission", "readPermission", "editPermission", "attachmentAddPermission", "executorRole", "editableStatuses", "initialUploadStatuses"), "authorization");
             for (String key : List.of("createPermission", "editPermission", "executorRole")) requiredText(authorization, key);
+            for (String key : List.of("readPermission", "attachmentAddPermission"))
+                if (authorization.has(key)) requiredText(authorization, key);
             for (String key : List.of("editableStatuses", "initialUploadStatuses")) {
                 if (!authorization.path(key).isArray()) throw new ConfigurationException("Invalid authorization " + key);
                 for (JsonNode status : authorization.path(key)) if (!status.isTextual() || !definition.path("presentation").path("statuses").has(status.asString())) throw new ConfigurationException("Unknown authorization status");
@@ -51,8 +53,9 @@ public final class DocumentTypeDefinition {
         }
         JsonNode ui = definition.path("ui");
         if (!ui.isObject()) throw new ConfigurationException("Missing ui: " + id());
-        AttributeSchema.keywords(ui, Set.of("columns", "fields", "searchFields", "dateField", "sortFields", "masks", "initialValues"), "ui");
-        for (String key : List.of("columns", "fields", "searchFields", "sortFields")) {
+        AttributeSchema.keywords(ui, Set.of("columns", "fields", "searchFields", "dateField", "sortFields", "masks", "initialValues",
+                "createForm", "viewCard", "editCard", "table", "sections", "tabs", "indexHints"), "ui");
+        for (String key : List.of("fields", "searchFields", "sortFields")) {
             if (!ui.path(key).isArray()) throw new ConfigurationException("ui." + key + " must be an array");
             Set<String> seen = new HashSet<>();
             for (JsonNode field : ui.path(key)) {
@@ -60,6 +63,39 @@ public final class DocumentTypeDefinition {
                     throw new ConfigurationException("Invalid ui field reference: " + id() + "." + key);
             }
         }
+        if (ui.has("indexHints")) {
+            if (!ui.path("indexHints").isArray()) throw new ConfigurationException("ui.indexHints must be an array");
+            Set<String> hints = new HashSet<>();
+            for (JsonNode field : ui.path("indexHints")) {
+                if (!field.isTextual() || !schema.fields().contains(field.asString()) || !hints.add(field.asString()))
+                    throw new ConfigurationException("Invalid ui field reference: " + id() + ".indexHints");
+            }
+        }
+        if (!ui.path("columns").isArray()) throw new ConfigurationException("ui.columns must be an array");
+        Set<String> columns = new HashSet<>();
+        for (JsonNode column : ui.path("columns")) {
+            String field = column.isTextual() ? column.asString() : column.path("field").asString();
+            if (field.isBlank() || !schema.fields().contains(field) || !columns.add(field))
+                throw new ConfigurationException("Invalid ui field reference: " + id() + ".columns");
+            if (column.isObject()) {
+                AttributeSchema.keywords(column, Set.of("field", "label"), "ui column");
+                if (column.has("label")) requiredText(column, "label");
+            } else if (!column.isTextual()) throw new ConfigurationException("Invalid ui column: " + id());
+        }
+        for (String formName : List.of("createForm", "viewCard", "editCard")) {
+            if (!ui.has(formName)) continue;
+            JsonNode form = ui.path(formName);
+            if (!form.isObject() || !form.path("fields").isArray()) throw new ConfigurationException("Invalid ui form: " + id() + "." + formName);
+            Set<String> formFields = new HashSet<>();
+            for (JsonNode field : form.path("fields")) {
+                if (!field.isTextual() || !schema.fields().contains(field.asString()) || !formFields.add(field.asString()))
+                    throw new ConfigurationException("Invalid ui form field: " + id() + "." + formName);
+            }
+            for (String layout : List.of("sections", "tabs")) if (form.has(layout) && !form.path(layout).isArray())
+                throw new ConfigurationException("Invalid ui form layout: " + id() + "." + formName);
+        }
+        for (String layout : List.of("sections", "tabs")) if (ui.has(layout) && !ui.path(layout).isArray())
+            throw new ConfigurationException("Invalid ui layout: " + id() + "." + layout);
         if (ui.has("dateField") && (!ui.path("dateField").isTextual() || !schema.fields().contains(ui.path("dateField").asString())
                 || !"date".equals(schema.definition().path("properties").path(ui.path("dateField").asString()).path("format").asString())))
             throw new ConfigurationException("Invalid ui.dateField: " + id());
@@ -88,7 +124,7 @@ public final class DocumentTypeDefinition {
         }
         JsonNode workflow = definition.path("workflow");
         if (!workflow.isObject()) throw new ConfigurationException("Missing workflow: " + id());
-        AttributeSchema.keywords(workflow, Set.of("completion", "terminalStatuses"), "workflow");
+        AttributeSchema.keywords(workflow, Set.of("completion", "terminalStatuses", "commands"), "workflow");
         if (workflow.has("terminalStatuses")) {
             if (!workflow.path("terminalStatuses").isArray()) throw new ConfigurationException("Invalid terminalStatuses");
             for (JsonNode status : workflow.path("terminalStatuses")) if (!status.isTextual() || !definition.path("presentation").path("statuses").has(status.asString())) throw new ConfigurationException("Unknown terminal status");
@@ -104,9 +140,24 @@ public final class DocumentTypeDefinition {
             }
             if (!completion.path("autoStart").isBoolean()) throw new ConfigurationException("Invalid completion autoStart");
         }
+        if (workflow.has("commands")) {
+            JsonNode commands = workflow.path("commands");
+            if (!commands.isObject()) throw new ConfigurationException("Invalid workflow commands");
+            Set<String> known = Set.of("takeInWork", "submit", "approve", "returnForRevision", "reject", "store");
+            for (var command : commands.properties()) {
+                if (!known.contains(command.getKey()) || !command.getValue().isObject()) throw new ConfigurationException("Invalid workflow command");
+                AttributeSchema.keywords(command.getValue(), Set.of("from", "to"), "workflow command");
+                JsonNode from = command.getValue().path("from");
+                if (!from.isArray() || from.isEmpty()) throw new ConfigurationException("Invalid workflow command source status");
+                for (JsonNode status : from) if (!status.isTextual() || !definition.path("presentation").path("statuses").has(status.asString()))
+                    throw new ConfigurationException("Unknown workflow command source status");
+                String target = requiredText(command.getValue(), "to");
+                if (!definition.path("presentation").path("statuses").has(target)) throw new ConfigurationException("Unknown workflow command target status");
+            }
+        }
         JsonNode attachments = definition.path("attachments");
         if (!attachments.isObject()) throw new ConfigurationException("Missing attachments: " + id());
-        AttributeSchema.keywords(attachments, Set.of("enabled", "initialRequired", "maxCount", "maxSizeBytes", "allowedExtensions"), "attachments");
+        AttributeSchema.keywords(attachments, Set.of("enabled", "initialRequired", "maxCount", "maxSizeBytes", "allowedExtensions", "allowedMimeTypes"), "attachments");
         if (!attachments.path("enabled").isBoolean() || !attachments.path("initialRequired").isBoolean()
                 || !attachments.path("maxCount").isIntegralNumber() || !attachments.path("maxCount").canConvertToInt() || attachments.path("maxCount").asInt() < 0
                 || attachments.path("initialRequired").asBoolean() && (!attachments.path("enabled").asBoolean() || attachments.path("maxCount").asInt() == 0)
@@ -122,6 +173,14 @@ public final class DocumentTypeDefinition {
             throw new ConfigurationException("Invalid attachment allowedExtensions: " + id());
         for (JsonNode extension : attachmentPolicy.path("allowedExtensions"))
             if (!extension.isTextual() || !extension.asString().matches("[a-z0-9]+")) throw new ConfigurationException("Invalid attachment extension: " + id());
+        if (!attachmentPolicy.has("allowedMimeTypes")) attachmentPolicy.putArray("allowedMimeTypes");
+        if (!attachmentPolicy.path("allowedMimeTypes").isArray())
+            throw new ConfigurationException("Invalid attachment allowedMimeTypes: " + id());
+        var mimeTypes = new HashSet<String>();
+        for (JsonNode mimeType : attachmentPolicy.path("allowedMimeTypes"))
+            if (!mimeType.isTextual() || !mimeType.asString().matches("[a-z0-9!#$&^_.+-]+/[a-z0-9!#$&^_.+-]+")
+                    || !mimeTypes.add(mimeType.asString()))
+                throw new ConfigurationException("Invalid attachment MIME type: " + id());
     }
     public String id() { return definition.path("id").asString(); }
     public String title() { return definition.path("title").asString(); }
