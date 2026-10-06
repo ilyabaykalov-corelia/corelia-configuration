@@ -30,7 +30,8 @@ class ConfigurationLoaderTest {
         Files.createDirectories(root.resolve("data-model/entities"));
         Files.createDirectories(root.resolve("ui")); Files.createDirectories(root.resolve("permissions"));
         Files.createDirectories(root.resolve("operations")); Files.createDirectories(root.resolve("graphql"));
-        Files.writeString(root.resolve("configuration.json"), "{\"schemaVersion\":2,\"compatibility\":{\"corelia\":\">=0.1.0 <1.0.0\"},\"sources\":{\"entities\":\"data-model/entities\",\"ui\":\"ui\",\"operations\":\"operations\",\"permissions\":\"permissions\"}}");
+        String integrations = Files.isDirectory(root.resolve("integrations")) ? ",\"integrations\":\"integrations\"" : "";
+        Files.writeString(root.resolve("configuration.json"), "{\"schemaVersion\":2,\"compatibility\":{\"corelia\":\">=0.1.0 <1.0.0\"},\"sources\":{\"entities\":\"data-model/entities\",\"ui\":\"ui\",\"operations\":\"operations\",\"permissions\":\"permissions\"" + integrations + "}}");
         ObjectNode definition = type(config);
         if (!definition.has("presentation")) { ObjectNode presentation = definition.putObject("presentation"); presentation.putObject("statuses").put("CREATED", "Created"); presentation.putObject("aliases"); presentation.putObject("tones"); presentation.put("initialStatus", "CREATED"); }
         ObjectNode entity = definition.deepCopy(); entity.remove("ui"); entity.remove("authorization");
@@ -113,6 +114,16 @@ class ConfigurationLoaderTest {
         load(config());
         Files.writeString(root.resolve("configuration.json"), "{\"schemaVersion\":2,\"schemaVersion\":2}");
         assertThrows(RuntimeException.class, () -> new ConfigurationLoader().load(root, "0.1.0"));
+    }
+    @Test void loadsKafkaDocumentCreationRoutesFromCustomerConfiguration() throws Exception {
+        Files.createDirectories(root.resolve("integrations"));
+        Files.writeString(root.resolve("integrations/kafka-document-creation.json"), """
+            {"id":"kafkaDocumentCreation","consumerGroup":"documents-test",
+             "actor":{"id":"broker","login":"broker","fullName":"Broker","roles":["operator"],"taskUsername":"broker"},
+             "routes":[{"topic":"customer.documents.test.create","typeCode":"TEST_FORM"}]}
+            """);
+        assertEquals("documents-test", load(config()).kafkaDocumentCreation().consumerGroup());
+        assertEquals("TEST_FORM", load(config()).kafkaDocumentCreation().routes().getFirst().typeCode());
     }
     @Test void rejectsPathTraversalAndSymlinksOutsidePackage() throws Exception {
         var config = config();

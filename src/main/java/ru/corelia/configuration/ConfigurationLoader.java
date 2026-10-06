@@ -19,7 +19,8 @@ public final class ConfigurationLoader {
      * @param providerBindings storage/workflow binding, изолированные от domain definition
      * @param packageRoot канонический корень проверенного пакета
      */
-    public record LoadedConfiguration(DocumentTypeRegistry documentTypes, Map<String, JsonNode> providerBindings, Path packageRoot) {
+    public record LoadedConfiguration(DocumentTypeRegistry documentTypes, Map<String, JsonNode> providerBindings,
+                                      KafkaDocumentCreationConfiguration kafkaDocumentCreation, Path packageRoot) {
         public LoadedConfiguration {
             providerBindings = Collections.unmodifiableMap(new LinkedHashMap<>(providerBindings));
             packageRoot = packageRoot.toAbsolutePath().normalize();
@@ -46,7 +47,7 @@ public final class ConfigurationLoader {
         validateCompatibility(manifest, productVersion);
         JsonNode sources = manifest.path("sources");
         if (!sources.isObject()) throw new ConfigurationException("Missing sources");
-        AttributeSchema.keywords(sources, Set.of("entities", "ui", "operations", "permissions"), "sources");
+        AttributeSchema.keywords(sources, Set.of("entities", "ui", "operations", "permissions", "integrations"), "sources");
         Map<String, Path> roots = new LinkedHashMap<>();
         for (String type : List.of("entities", "ui", "operations", "permissions"))
             roots.put(type, sourceDirectory(root, DocumentTypeDefinition.requiredText(sources, type), type));
@@ -78,7 +79,49 @@ public final class ConfigurationLoader {
         if (!permissions.isEmpty()) throw new ConfigurationException(permissions.values().iterator().next().display() + ": Unknown entity '" + permissions.keySet().iterator().next() + "'");
         definitions.sort(Comparator.comparing(DocumentTypeDefinition::id));
         var registry = new DocumentTypeRegistry(definitions);
-        return new LoadedConfiguration(registry, bindings, root);
+        return new LoadedConfiguration(registry, bindings, kafkaDocumentCreation(root, sources, registry), root);
+    }
+
+    private KafkaDocumentCreationConfiguration kafkaDocumentCreation(Path root, JsonNode sources, DocumentTypeRegistry registry) throws IOException {
+        if (!sources.has("integrations")) return null;
+        Path directory = sourceDirectory(root, DocumentTypeDefinition.requiredText(sources, "integrations"), "integrations");
+        List<Path> files = scan(directory, "integrations");
+        if (files.size() != 1) throw new ConfigurationException("Kafka integrations must contain exactly one JSON file");
+        String display = display(root, files.getFirst());
+        JsonNode integration = read(files.getFirst(), display);
+        if (!integration.isObject()) throw new ConfigurationException(display + ": integration must be an object");
+        AttributeSchema.keywords(integration, Set.of("id", "consumerGroup", "actor", "routes"), display);
+        if (!"kafkaDocumentCreation".equals(DocumentTypeDefinition.requiredText(integration, "id")))
+            throw new ConfigurationException(display + ": Unknown integration");
+        String consumerGroup = DocumentTypeDefinition.requiredText(integration, "consumerGroup");
+        JsonNode actorNode = integration.path("actor");
+        if (!actorNode.isObject()) throw new ConfigurationException(display + ": Missing actor");
+        AttributeSchema.keywords(actorNode, Set.of("id", "login", "fullName", "email", "roles", "taskUsername"), display + ".actor");
+        JsonNode rolesNode = actorNode.path("roles");
+        if (!rolesNode.isArray()) throw new ConfigurationException(display + ": actor.roles must be an array");
+        List<String> roles = new ArrayList<>();
+        for (JsonNode role : rolesNode) {
+            if (!role.isTextual() || role.asString().isBlank()) throw new ConfigurationException(display + ": Invalid actor role");
+            roles.add(role.asString());
+        }
+        var actor = new KafkaDocumentCreationConfiguration.Actor(
+                DocumentTypeDefinition.requiredText(actorNode, "id"), DocumentTypeDefinition.requiredText(actorNode, "login"),
+                DocumentTypeDefinition.requiredText(actorNode, "fullName"), actorNode.path("email").asText(), roles,
+                DocumentTypeDefinition.requiredText(actorNode, "taskUsername"));
+        JsonNode routesNode = integration.path("routes");
+        if (!routesNode.isArray() || routesNode.isEmpty()) throw new ConfigurationException(display + ": routes must not be empty");
+        List<KafkaDocumentCreationConfiguration.Route> routes = new ArrayList<>();
+        Set<String> topics = new HashSet<>();
+        for (JsonNode routeNode : routesNode) {
+            if (!routeNode.isObject()) throw new ConfigurationException(display + ": Invalid route");
+            AttributeSchema.keywords(routeNode, Set.of("topic", "typeCode"), display + ".routes");
+            String topic = DocumentTypeDefinition.requiredText(routeNode, "topic");
+            String typeCode = DocumentTypeDefinition.requiredText(routeNode, "typeCode");
+            registry.require(typeCode);
+            if (!topics.add(topic)) throw new ConfigurationException(display + ": Duplicate Kafka topic '" + topic + "'");
+            routes.add(new KafkaDocumentCreationConfiguration.Route(topic, typeCode));
+        }
+        return new KafkaDocumentCreationConfiguration(consumerGroup, actor, routes);
     }
 
     private Map<String, Fragment> fragmentsById(Path root, List<Path> files, String label, Set<String> keys) throws IOException {
